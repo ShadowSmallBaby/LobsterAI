@@ -30,6 +30,7 @@ interface SidebarProps {
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   updateBadge?: React.ReactNode;
+  hideLogin?: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -44,6 +45,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   isCollapsed,
   onToggleCollapse,
   updateBadge,
+  hideLogin,
 }) => {
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
@@ -307,8 +309,12 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       ) : (
         <div className="px-3 pb-3 pt-1 flex items-center gap-1">
-          <LoginButton />
-          <div className="flex-1" />
+          {!hideLogin && (
+            <>
+              <LoginButton />
+              <div className="flex-1" />
+            </>
+          )}
           <button
             type="button"
             onClick={() => onShowSettings()}

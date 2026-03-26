@@ -66,6 +66,9 @@ export function syncEnterpriseConfig(
   }
 
   console.log(`[Enterprise] detected enterprise config: ${manifest.name} v${manifest.version}`);
+  try {
+    console.log(`[Enterprise] manifest: ${JSON.stringify(manifest, null, 2)}`);
+  } catch { /* ignore serialization errors */ }
 
   // Check if enterprise config version has changed since last sync.
   // Skip file copy operations (skills, agents) if version is unchanged.
