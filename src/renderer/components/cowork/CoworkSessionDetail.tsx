@@ -731,7 +731,7 @@ const ToolCallGroup: React.FC<{
               {toolName}
             </span>
             {toolInputSummary && (
-              <code className="text-xs/80 text-secondary/80 font-mono truncate max-w-[400px]">
+              <code className="text-xs text-secondary/80 font-mono truncate max-w-[400px]">
                 {toolInputSummary}
               </code>
             )}
@@ -750,7 +750,7 @@ const ToolCallGroup: React.FC<{
             </div>
           )}
           {!toolResult && (
-            <div className="text-xs/60 text-secondary/60 mt-0.5">
+            <div className="text-xs text-secondary/60 mt-0.5">
               {i18nService.t('coworkToolRunning')}
             </div>
           )}
@@ -831,7 +831,7 @@ const ToolCallGroup: React.FC<{
             <div className="space-y-2">
               {toolInputDisplay && (
                 <div>
-                  <div className="text-[10px] font-medium/70 text-secondary/70 uppercase tracking-wider mb-1">
+                  <div className="text-[10px] font-medium text-secondary/70 uppercase tracking-wider mb-1">
                     {i18nService.t('coworkToolInput')}
                   </div>
                   <div className="max-h-48 overflow-y-auto">
@@ -843,7 +843,7 @@ const ToolCallGroup: React.FC<{
               )}
               {toolResult && (hasToolResultText || showNoDetailError) && (
                 <div>
-                  <div className="text-[10px] font-medium/70 text-secondary/70 uppercase tracking-wider mb-1">
+                  <div className="text-[10px] font-medium text-secondary/70 uppercase tracking-wider mb-1">
                     {i18nService.t('coworkToolResult')}
                   </div>
                   <div className="max-h-64 overflow-y-auto">
@@ -1217,7 +1217,7 @@ export const AssistantTurnBlock: React.FC<{
               {i18nService.t('coworkToolResult')}
             </div>
             {resultLineCount > 0 && (
-              <div className="text-xs/60 text-secondary/60 mt-0.5">
+              <div className="text-xs text-secondary/60 mt-0.5">
                 {resultLineCount} {resultLineCount === 1 ? 'line' : 'lines'} of output
               </div>
             )}

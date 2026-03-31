@@ -151,11 +151,11 @@ const TaskList: React.FC<TaskListProps> = ({ onRequestDelete }) => {
   if (tasks.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 px-6">
-        <ClockIcon className="h-12 w-12/40 text-secondary/40 mb-4" />
+        <ClockIcon className="h-12 w-12 text-secondary/40 mb-4" />
         <p className="text-sm font-medium text-secondary mb-1">
           {i18nService.t('scheduledTasksEmptyState')}
         </p>
-        <p className="text-xs/70 text-secondary/70 text-center">
+        <p className="text-xs text-secondary/70 text-center">
           {i18nService.t('scheduledTasksEmptyHint')}
         </p>
       </div>

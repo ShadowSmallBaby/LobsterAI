@@ -3850,7 +3850,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                           className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
                           placeholder={i18nService.t('ollamaModelNamePlaceholder')}
                         />
-                        <p className="mt-1 text-[11px]/70 text-secondary/70">
+                        <p className="mt-1 text-[11px] text-secondary/70">
                           {i18nService.t('ollamaModelNameHint')}
                         </p>
                       </div>
@@ -3870,7 +3870,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                           className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
                           placeholder={i18nService.t('ollamaDisplayNamePlaceholder')}
                         />
-                        <p className="mt-1 text-[11px]/70 text-secondary/70">
+                        <p className="mt-1 text-[11px] text-secondary/70">
                           {i18nService.t('ollamaDisplayNameHint')}
                         </p>
                       </div>
