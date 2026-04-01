@@ -1130,19 +1130,28 @@ export class OpenClawConfigSync {
     // forcing those channels to restart when the binding changes.  OpenClaw
     // channel plugins capture their config at startup and never refresh it,
     // so bindings-only config changes (kind: "none" in the reload plan) are
-     // invisible to running plugins.  By touching the channel config we trigger
-     // a "channels.*" diff path which forces the plugin to restart.
-     const platformBindingsForSentinel = this.getIMSettings?.()?.platformAgentBindings;
-     if (platformBindingsForSentinel) {
-       // Map openclaw channel key → platform key
-      const channelToPlatform = PlatformRegistry;
-       const channels = (managedConfig.channels ?? {}) as Record<string, Record<string, unknown>>;
+    // invisible to running plugins.  By touching the channel config we trigger
+    // a "channels.*" diff path which forces the plugin to restart.
+    const platformBindingsForSentinel = this.getIMSettings?.()?.platformAgentBindings;
+    if (platformBindingsForSentinel) {
+      const channels = (managedConfig.channels ?? {}) as Record<string, Record<string, unknown>>;
       for (const channelKey of Object.keys(channels)) {
         if (!channels[channelKey] || typeof channels[channelKey] !== 'object') continue;
-        const platformKey = channelToPlatform.platformOfChannel(channelKey);
-        const boundAgentId = platformKey ? platformBindingsForSentinel[platformKey] : undefined;
-        if (boundAgentId && boundAgentId !== 'main') {
-          channels[channelKey]._agentBinding = boundAgentId;
+        const platformKey = PlatformRegistry.platformOfChannel(channelKey);
+        if (!platformKey) continue;
+        // Collect all bindings for this platform (platform-level + per-instance)
+        const bindingValues: string[] = [];
+        if (platformBindingsForSentinel[platformKey] && platformBindingsForSentinel[platformKey] !== 'main') {
+          bindingValues.push(platformBindingsForSentinel[platformKey]);
+        }
+        const prefix = `${platformKey}:`;
+        for (const key of Object.keys(platformBindingsForSentinel)) {
+          if (key.startsWith(prefix) && platformBindingsForSentinel[key] !== 'main') {
+            bindingValues.push(`${key}=${platformBindingsForSentinel[key]}`);
+          }
+        }
+        if (bindingValues.length > 0) {
+          channels[channelKey]._agentBinding = bindingValues.join(',');
         }
       }
     }
@@ -1618,22 +1627,45 @@ export class OpenClawConfigSync {
 
     const agents = this.getAgents?.() ?? [];
 
-    // Map openclaw channel name → platform key used in platformAgentBindings
-    const channelMap: Array<{ getter: () => { enabled: boolean } | null; channel: string; platform: string }> = [
-      { getter: () => {
-        const instances = this.getDingTalkInstances();
-        return instances.some(i => i.enabled) ? { enabled: true } : null;
-      }, channel: 'dingtalk', platform: 'dingtalk' },
-      { getter: () => {
-        const instances = this.getFeishuInstances();
-        return instances.some(i => i.enabled) ? { enabled: true } : null;
-      }, channel: 'feishu', platform: 'feishu' },
+    const bindings: Array<Record<string, unknown>> = [];
+
+    // Handle per-instance bindings for multi-instance platforms
+    const multiInstanceChannels: Record<string, { channel: string; getInstances: () => Array<{ instanceId: string; enabled: boolean }> }> = {
+      dingtalk: { channel: 'dingtalk', getInstances: () => this.getDingTalkInstances() },
+      feishu: { channel: 'feishu', getInstances: () => this.getFeishuInstances() },
+      qq: { channel: 'qqbot', getInstances: () => this.getQQInstances() },
+    };
+
+    for (const [platform, { channel, getInstances }] of Object.entries(multiInstanceChannels)) {
+      try {
+        const instances = getInstances();
+        for (const inst of instances) {
+          if (!inst.enabled) continue;
+          // Check for per-instance binding: `platform:instanceId`
+          const bindingKey = `${platform}:${inst.instanceId}`;
+          const agentId = platformBindings[bindingKey];
+          if (!agentId || agentId === 'main') continue;
+          const targetAgent = agents.find((a) => a.id === agentId && a.enabled);
+          if (!targetAgent) continue;
+          bindings.push({ agentId, match: { channel, accountId: inst.instanceId.slice(0, 8) } });
+        }
+        // Also check legacy platform-level binding
+        const platformAgentId = platformBindings[platform];
+        if (platformAgentId && platformAgentId !== 'main') {
+          const targetAgent = agents.find((a) => a.id === platformAgentId && a.enabled);
+          if (targetAgent && instances.some(i => i.enabled)) {
+            bindings.push({ agentId: platformAgentId, match: { channel } });
+          }
+        }
+      } catch {
+        // Skip platforms that fail to load config
+      }
+    }
+
+    // Handle single-instance platforms
+    const singleInstanceChannels: Array<{ getter: () => { enabled: boolean } | null; channel: string; platform: string }> = [
       { getter: () => this.getTelegramOpenClawConfig?.() ?? null, channel: 'telegram', platform: 'telegram' },
       { getter: () => this.getDiscordOpenClawConfig?.() ?? null, channel: 'discord', platform: 'discord' },
-      { getter: () => {
-        const instances = this.getQQInstances();
-        return instances.some(i => i.enabled) ? { enabled: true } : null;
-      }, channel: 'qqbot', platform: 'qq' },
       { getter: () => this.getWecomConfig(), channel: 'wecom', platform: 'wecom' },
       { getter: () => this.getPopoConfig(), channel: 'moltbot-popo', platform: 'popo' },
       { getter: () => this.getNimConfig(), channel: 'nim', platform: 'nim' },
@@ -1641,12 +1673,10 @@ export class OpenClawConfigSync {
       { getter: () => this.getWeixinConfig(), channel: 'openclaw-weixin', platform: 'weixin' },
     ];
 
-    const bindings: Array<Record<string, unknown>> = [];
-    for (const { getter, channel, platform } of channelMap) {
+    for (const { getter, channel, platform } of singleInstanceChannels) {
       const agentId = platformBindings[platform];
       if (!agentId || agentId === 'main') continue;
 
-      // Verify the target agent actually exists and is enabled
       const targetAgent = agents.find((a) => a.id === agentId && a.enabled);
       if (!targetAgent) continue;
 

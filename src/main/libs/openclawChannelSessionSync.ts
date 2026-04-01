@@ -159,6 +159,72 @@ export function extractAgentIdFromKey(sessionKey: string): string | null {
   return sessionKey.slice(6, secondColon);
 }
 
+/**
+ * Extract the accountId from a gateway session key (for multi-instance platforms).
+ * Key format: "agent:{agentId}:{channel}:{accountId}:{peerKind}:{peerId}"
+ * Returns null if the key doesn't contain an accountId.
+ */
+export function extractAccountIdFromKey(sessionKey: string): string | null {
+  if (!sessionKey.startsWith('agent:')) return null;
+
+  // Try JSON SessionContext format first
+  const jsonIdx = sessionKey.indexOf(':{');
+  if (jsonIdx > 0) {
+    const jsonStr = sessionKey.slice(jsonIdx + 1);
+    try {
+      const ctx = JSON.parse(jsonStr);
+      if (ctx && typeof ctx.accountid === 'string') {
+        return ctx.accountid;
+      }
+    } catch {
+      // Not valid JSON
+    }
+    return null;
+  }
+
+  const parts = sessionKey.split(':');
+  if (parts.length < 6) return null;
+  // agent:{agentId}:{channel}:{accountId}:{peerKind}:{peerId}
+  const peerKinds = new Set(['direct', 'group', 'channel']);
+  if (!peerKinds.has(parts[3])) {
+    // parts[3] is accountId (not a peerKind)
+    return parts[3];
+  }
+  return null;
+}
+
+const MULTI_INSTANCE_PLATFORMS = new Set<Platform>(['dingtalk', 'feishu', 'qq']);
+
+/**
+ * Resolve the agent binding for a platform, supporting per-instance bindings.
+ * Checks for composite key `platform:instanceId` first (matching by accountId prefix),
+ * then falls back to platform-level key, then 'main'.
+ */
+export function resolveAgentBinding(
+  bindings: Record<string, string> | undefined,
+  platform: Platform,
+  accountId?: string | null,
+): string {
+  if (!bindings) return 'main';
+
+  // For multi-instance platforms, try per-instance binding first
+  if (MULTI_INSTANCE_PLATFORMS.has(platform) && accountId) {
+    // Scan bindings for a key like `platform:instanceId` where instanceId starts with accountId
+    const prefix = `${platform}:`;
+    for (const key of Object.keys(bindings)) {
+      if (key.startsWith(prefix)) {
+        const instanceId = key.slice(prefix.length);
+        if (instanceId.startsWith(accountId)) {
+          return bindings[key];
+        }
+      }
+    }
+  }
+
+  // Fallback: platform-level binding (legacy or single-instance)
+  return bindings[platform] || 'main';
+}
+
 /** Match OpenClaw main agent session keys like "agent:main:main" or "agent:secondary:main". */
 const MAIN_AGENT_SESSION_RE = /^agent:[^:]+:main$/;
 
@@ -245,7 +311,8 @@ export class OpenClawChannelSessionSync {
     const keyAgentId = extractAgentIdFromKey(sessionKey);
     if (!keyAgentId) return true; // Legacy key without agentId — allow
     const imSettings = this.imStore.getIMSettings();
-    const currentAgentId = imSettings.platformAgentBindings?.[parsed.platform] || 'main';
+    const accountId = extractAccountIdFromKey(sessionKey);
+    const currentAgentId = resolveAgentBinding(imSettings.platformAgentBindings, parsed.platform, accountId);
     return keyAgentId === currentAgentId;
   }
 
@@ -299,7 +366,8 @@ export class OpenClawChannelSessionSync {
         // When platformAgentBindings changes, the mapping's agentId becomes stale.
         // Create a new session for the new agent and update the mapping.
         const imSettings = this.imStore.getIMSettings();
-        const currentAgentId = imSettings.platformAgentBindings?.[parsed.platform] || 'main';
+        const accountId = extractAccountIdFromKey(sessionKey);
+        const currentAgentId = resolveAgentBinding(imSettings.platformAgentBindings, parsed.platform, accountId);
         if (existingMapping.agentId !== currentAgentId) {
           console.log('[ChannelSessionSync] agent binding changed:', existingMapping.agentId, '→', currentAgentId, '— creating new session');
           const titlePrefix = getChannelTitlePrefix(parsed.platform);
@@ -342,7 +410,8 @@ export class OpenClawChannelSessionSync {
     const cwd = this.getDefaultCwd();
     // Look up the per-platform agent binding so the session is filed under the correct agent.
     const imSettings = this.imStore.getIMSettings();
-    const agentId = imSettings.platformAgentBindings?.[parsed.platform] || 'main';
+    const accountId = extractAccountIdFromKey(sessionKey);
+    const agentId = resolveAgentBinding(imSettings.platformAgentBindings, parsed.platform, accountId);
     console.log('[ChannelSessionSync] creating new cowork session: title=', title, 'cwd=', cwd, 'agentId=', agentId);
 
     const session = this.coworkStore.createSession(title, cwd, '', 'local', [], agentId);
