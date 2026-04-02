@@ -1,5 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useSelector } from 'react-redux';
+import {
+  selectCoworkSessions,
+  selectCurrentSessionId,
+} from '../store/selectors/coworkSelectors';
 import { RootState } from '../store';
 import { agentService } from '../services/agent';
 import { coworkService } from '../services/cowork';
@@ -48,9 +52,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   hideLogin,
 }) => {
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
-  const sessions = useSelector((state: RootState) => state.cowork.sessions);
+  const sessions = useSelector(selectCoworkSessions);
   const filteredSessions = sessions.filter((s) => !s.agentId || s.agentId === currentAgentId);
-  const currentSessionId = useSelector((state: RootState) => state.cowork.currentSessionId);
+  const currentSessionId = useSelector(selectCurrentSessionId);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());

@@ -1,6 +1,13 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useSelector } from 'react-redux';
+import {
+  selectCurrentSession,
+  selectIsStreaming,
+  selectRemoteManaged,
+  selectLastMessageContent,
+  selectCurrentMessagesLength,
+} from '../../store/selectors/coworkSelectors';
 import { RootState } from '../../store';
 import { i18nService } from '../../services/i18n';
 import type { CoworkMessage, CoworkMessageMetadata, CoworkImageAttachment } from '../../types/cowork';
@@ -1331,9 +1338,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   updateBadge,
 }) => {
   const isMac = window.electron.platform === 'darwin';
-  const currentSession = useSelector((state: RootState) => state.cowork.currentSession);
-  const isStreaming = useSelector((state: RootState) => state.cowork.isStreaming);
-  const remoteManaged = useSelector((state: RootState) => state.cowork.remoteManaged);
+  const currentSession = useSelector(selectCurrentSession);
+  const isStreaming = useSelector(selectIsStreaming);
+  const remoteManaged = useSelector(selectRemoteManaged);
+  const lastMessageContent = useSelector(selectLastMessageContent);
+  const messagesLength = useSelector(selectCurrentMessagesLength);
   const skills = useSelector((state: RootState) => state.skill.skills);
   const detailRootRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1811,8 +1820,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     currentRailIndexRef.current = railIndex;
     setCurrentRailIndex(railIndex);
   }, []);
-  const lastMessage = currentSession?.messages?.[currentSession.messages.length - 1];
-  const lastMessageContent = lastMessage?.content;
+
+  // lastMessageContent and messagesLength are now sourced from memoized
+  // selectors (selectLastMessageContent / selectCurrentMessagesLength)
+  // so there is no need to derive them from currentSession here.
 
   const resolveLocalFilePath = useCallback((href: string, text: string) => {
     const hrefValue = typeof href === 'string' ? href.trim() : '';
@@ -1920,7 +1931,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       currentRailIndexRef.current = lastRail;
       setCurrentRailIndex(lastRail);
     }
-  }, [currentSession?.messages?.length, lastMessageContent, isStreaming, shouldAutoScroll, turns.length]);
+  }, [messagesLength, lastMessageContent, isStreaming, shouldAutoScroll, turns.length]);
 
 
   if (!currentSession) {
