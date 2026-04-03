@@ -275,6 +275,8 @@ interface IElectronAPI {
     setEnabled: (options: { id: string; enabled: boolean }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     fetchMarketplace: () => Promise<{ success: boolean; data?: McpMarketplaceData; error?: string }>;
     refreshBridge: () => Promise<{ success: boolean; tools: number; error?: string }>;
+    onBridgeSyncStart: (callback: () => void) => () => void;
+    onBridgeSyncDone: (callback: (data: { tools: number; error?: string }) => void) => () => void;
   };
   agents: {
     list: () => Promise<Agent[]>;

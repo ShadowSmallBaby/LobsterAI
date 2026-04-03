@@ -173,7 +173,6 @@ const McpManager: React.FC = () => {
       const updatedServers = await mcpService.setServerEnabled(serverId, !targetServer.enabled);
       dispatch(setMcpServers(updatedServers));
       setActionError('');
-      triggerBridgeRefresh();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : i18nService.t('mcpUpdateFailed'));
     }
@@ -204,7 +203,6 @@ const McpManager: React.FC = () => {
     }
     setIsDeleting(false);
     setPendingDelete(null);
-    triggerBridgeRefresh();
   };
 
   const handleOpenEditForm = (server: McpServerConfig) => {
@@ -247,7 +245,6 @@ const McpManager: React.FC = () => {
       }
     }
     handleCloseForm();
-    triggerBridgeRefresh();
   };
 
   const handleOpenCreateForm = () => {
@@ -259,25 +256,26 @@ const McpManager: React.FC = () => {
   const existingNames = useMemo(() => servers.map(s => s.name), [servers]);
 
   /**
-   * Trigger MCP bridge refresh after server config changes.
-   * Shows loading state while MCP servers restart + gateway reloads.
+   * Listen for MCP bridge sync events from the main process.
+   * Main process broadcasts syncStart/syncDone after server config changes.
    */
-  const triggerBridgeRefresh = async () => {
-    setBridgeSyncing(true);
-    setBridgeSyncResult(null);
-    try {
-      const result = await mcpService.refreshBridge();
-      setBridgeSyncResult({ tools: result.tools, error: result.error });
-      // Auto-hide success message after 5 seconds
-      if (!result.error) {
+  useEffect(() => {
+    const cleanupStart = mcpService.onBridgeSyncStart(() => {
+      setBridgeSyncing(true);
+      setBridgeSyncResult(null);
+    });
+    const cleanupDone = mcpService.onBridgeSyncDone((data) => {
+      setBridgeSyncing(false);
+      setBridgeSyncResult({ tools: data.tools, error: data.error });
+      if (!data.error) {
         setTimeout(() => setBridgeSyncResult(null), 5000);
       }
-    } catch {
-      setBridgeSyncResult({ tools: 0, error: 'MCP bridge refresh failed' });
-    } finally {
-      setBridgeSyncing(false);
-    }
-  };
+    });
+    return () => {
+      cleanupStart();
+      cleanupDone();
+    };
+  }, []);
 
   const marketplaceCount = useMemo(
     () => dynamicRegistry.length,
@@ -302,7 +300,21 @@ const McpManager: React.FC = () => {
     }`;
 
   return (
-    <div className="space-y-4">
+    <div className="relative space-y-4">
+      {/* Sync overlay — blocks ALL interaction (including sidebar) while MCP bridge is refreshing */}
+      {bridgeSyncing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
+          <div className="flex flex-col items-center gap-4 px-10 py-8 rounded-2xl bg-surface border border-border shadow-card">
+            <svg className="animate-spin h-8 w-8 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="text-sm text-foreground font-medium">
+              {i18nService.t('mcpBridgeSyncing') || 'Syncing MCP tools...'}
+            </span>
+          </div>
+        </div>
+      )}
       {/* Description */}
       <p className="text-sm text-secondary">
         {i18nService.t('mcpDescription')}
@@ -315,16 +327,7 @@ const McpManager: React.FC = () => {
         />
       )}
 
-      {/* MCP Bridge sync status */}
-      {bridgeSyncing && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs dark:bg-blue-500/10 bg-blue-50 dark:text-blue-400 text-blue-600 border dark:border-blue-500/20 border-blue-200">
-          <svg className="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          {i18nService.t('mcpBridgeSyncing') || 'Syncing MCP tools...'}
-        </div>
-      )}
+      {/* MCP Bridge sync result */}
       {!bridgeSyncing && bridgeSyncResult && (
         <div className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs border ${
           bridgeSyncResult.error
