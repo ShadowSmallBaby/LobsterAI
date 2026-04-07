@@ -1,13 +1,19 @@
+import { ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
+
 import { agentService } from '../../services/agent';
-import { imService } from '../../services/im';
 import { i18nService } from '../../services/i18n';
-import { XMarkIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { imService } from '../../services/im';
+import type { RootState } from '../../store';
+import type { Model } from '../../store/slices/modelSlice';
+import type { IMGatewayConfig,IMPlatform } from '../../types/im';
+import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
-import type { IMPlatform, IMGatewayConfig } from '../../types/im';
+import Modal from '../common/Modal';
+import ModelSelector from '../ModelSelector';
 import AgentSkillSelector from './AgentSkillSelector';
 import EmojiPicker from './EmojiPicker';
-import Modal from '../common/Modal';
 
 type CreateTab = 'basic' | 'skills' | 'im';
 
@@ -35,9 +41,12 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({ isOpen, onClose }) 
   const [systemPrompt, setSystemPrompt] = useState('');
   const [identity, setIdentity] = useState('');
   const [icon, setIcon] = useState('');
+  const [model, setModel] = useState<Model | null>(null);
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [activeTab, setActiveTab] = useState<CreateTab>('basic');
+  const availableModels = useSelector((state: RootState) => state.model.availableModels);
+  const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
 
   // IM binding state
@@ -64,6 +73,11 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({ isOpen, onClose }) 
     });
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen || model || !globalSelectedModel) return;
+    setModel(globalSelectedModel);
+  }, [globalSelectedModel, isOpen, model]);
+
   if (!isOpen) return null;
 
   const resetForm = () => {
@@ -72,6 +86,7 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({ isOpen, onClose }) 
     setSystemPrompt('');
     setIdentity('');
     setIcon('');
+    setModel(null);
     setSkillIds([]);
     setActiveTab('basic');
     setBoundPlatforms(new Set());
@@ -99,6 +114,7 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({ isOpen, onClose }) 
         description: description.trim(),
         systemPrompt: systemPrompt.trim(),
         identity: identity.trim(),
+        model: model ? toOpenClawModelRef(model) : '',
         icon: icon.trim() || undefined,
         skillIds,
       });
@@ -240,6 +256,20 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({ isOpen, onClose }) 
                   placeholder={i18nService.t('agentIdentityPlaceholder') || 'Identity description (IDENTITY.md)...'}
                   className="w-full px-3 py-2 rounded-lg border border-border bg-transparent text-foreground text-sm resize-none"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-secondary mb-1">
+                  {i18nService.t('agentDefaultModel') || 'Agent Default Model'}
+                </label>
+                <ModelSelector
+                  value={model}
+                  onChange={setModel}
+                />
+                {availableModels.length > 0 && (
+                  <p className="mt-1 text-xs text-secondary/70">
+                    {i18nService.t('agentModelOpenClawOnly') || 'This setting only applies to the OpenClaw engine'}
+                  </p>
+                )}
               </div>
             </div>
           )}

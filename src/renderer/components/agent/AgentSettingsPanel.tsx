@@ -1,23 +1,33 @@
+import { ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import type { Platform } from '@shared/platform';
+import { PlatformRegistry } from '@shared/platform';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
-import { RootState } from '../../store';
+
 import { agentService } from '../../services/agent';
-import { imService } from '../../services/im';
 import { i18nService } from '../../services/i18n';
-import { XMarkIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import TrashIcon from '../icons/TrashIcon';
+import { imService } from '../../services/im';
+import { RootState } from '../../store';
+import type { Model } from '../../store/slices/modelSlice';
 import type { Agent } from '../../types/agent';
-import type { Platform } from '@shared/platform';
-import type { IMGatewayConfig } from '../../types/im';
+import type { DingTalkInstanceConfig, DingTalkInstanceStatus, FeishuInstanceConfig, FeishuInstanceStatus, IMGatewayConfig, IMGatewayStatus, QQInstanceConfig, QQInstanceStatus } from '../../types/im';
+import { resolveOpenClawModelRef, toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
-import { PlatformRegistry } from '@shared/platform';
+import Modal from '../common/Modal';
+import TrashIcon from '../icons/TrashIcon';
+import ModelSelector from '../ModelSelector';
 import AgentSkillSelector from './AgentSkillSelector';
 import EmojiPicker from './EmojiPicker';
-import Modal from '../common/Modal';
 
 type SettingsTab = 'basic' | 'skills' | 'im';
+type MultiInstancePlatform = 'dingtalk' | 'feishu' | 'qq';
+type MultiInstanceConfig = DingTalkInstanceConfig | FeishuInstanceConfig | QQInstanceConfig;
+type MultiInstanceStatus = DingTalkInstanceStatus | FeishuInstanceStatus | QQInstanceStatus;
 
-const MULTI_INSTANCE_PLATFORMS: Platform[] = ['dingtalk', 'feishu', 'qq'];
+const MULTI_INSTANCE_PLATFORMS: MultiInstancePlatform[] = ['dingtalk', 'feishu', 'qq'];
+
+const isMultiInstancePlatform = (platform: Platform): platform is MultiInstancePlatform =>
+  MULTI_INSTANCE_PLATFORMS.includes(platform as MultiInstancePlatform);
 
 interface AgentSettingsPanelProps {
   agentId: string | null;
@@ -29,12 +39,14 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const agents = useSelector((state: RootState) => state.agent.agents);
   const imStatus = useSelector((state: RootState) => state.im.status);
+  const availableModels = useSelector((state: RootState) => state.model.availableModels);
   const [, setAgent] = useState<Agent | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [identity, setIdentity] = useState('');
   const [icon, setIcon] = useState('');
+  const [model, setModel] = useState<Model | null>(null);
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -69,6 +81,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
         setSystemPrompt(a.systemPrompt);
         setIdentity(a.identity);
         setIcon(a.icon);
+        setModel(resolveOpenClawModelRef(a.model, availableModels) ?? null);
         setSkillIds(a.skillIds ?? []);
         initialValuesRef.current = {
           name: a.name,
@@ -96,7 +109,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
       }
     });
     imService.loadStatus();
-  }, [agentId]);
+  }, [agentId, availableModels]);
 
   const isDirty = useCallback((): boolean => {
     const init = initialValuesRef.current;
@@ -134,6 +147,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
         description: description.trim(),
         systemPrompt: systemPrompt.trim(),
         identity: identity.trim(),
+        model: model ? toOpenClawModelRef(model) : '',
         icon: icon.trim(),
         skillIds,
       });
@@ -189,16 +203,16 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
   };
 
   /** Check if a multi-instance platform has any enabled+connected instances */
-  const getConnectedInstances = (platform: Platform) => {
+  const getConnectedInstances = (platform: MultiInstancePlatform) => {
     if (!imConfig) return [];
-    const cfg = imConfig[platform] as any;
+    const cfg = imConfig[platform];
     const instances = cfg?.instances;
     if (!Array.isArray(instances)) return [];
-    const statusInstances = (imStatus as any)?.[platform]?.instances;
-    return instances.filter((inst: any) => {
+    const statusInstances = (imStatus as IMGatewayStatus | undefined)?.[platform]?.instances;
+    return instances.filter((inst: MultiInstanceConfig) => {
       if (!inst.enabled) return false;
       const instStatus = Array.isArray(statusInstances)
-        ? statusInstances.find((s: any) => s.instanceId === inst.instanceId)
+        ? statusInstances.find((s: MultiInstanceStatus) => s.instanceId === inst.instanceId)
         : null;
       return instStatus?.connected === true;
     });
@@ -206,10 +220,10 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
 
   const isPlatformConfigured = (platform: Platform): boolean => {
     if (!imConfig) return false;
-    if (MULTI_INSTANCE_PLATFORMS.includes(platform)) {
+    if (isMultiInstancePlatform(platform)) {
       return getConnectedInstances(platform).length > 0;
     }
-    return (imConfig[platform] as any)?.enabled === true;
+    return 'enabled' in imConfig[platform] && imConfig[platform].enabled === true;
   };
 
   /** Resolve agent name by id */
@@ -241,7 +255,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
     </div>
   );
 
-  const renderMultiInstancePlatform = (platform: Platform) => {
+  const renderMultiInstancePlatform = (platform: MultiInstancePlatform) => {
     const connectedInstances = getConnectedInstances(platform);
     const logo = PlatformRegistry.logo(platform);
     const bindings = imConfig?.settings?.platformAgentBindings || {};
@@ -285,7 +299,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
           </span>
         </div>
         {/* Instance list */}
-        {connectedInstances.map((inst: any, idx: number) => {
+        {connectedInstances.map((inst: MultiInstanceConfig, idx: number) => {
           const bindingKey = `${platform}:${inst.instanceId}`;
           const isBound = boundKeys.has(bindingKey);
           const otherAgentId = bindings[bindingKey];
@@ -464,6 +478,20 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
                   className="w-full px-3 py-2 rounded-lg border border-border bg-transparent text-foreground text-sm resize-none"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-secondary mb-1">
+                  {i18nService.t('agentDefaultModel') || 'Agent Default Model'}
+                </label>
+                <ModelSelector
+                  value={model}
+                  onChange={setModel}
+                />
+                {availableModels.length > 0 && (
+                  <p className="mt-1 text-xs text-secondary/70">
+                    {i18nService.t('agentModelOpenClawOnly') || 'This setting only applies to the OpenClaw engine'}
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
@@ -480,7 +508,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
                 {PlatformRegistry.platforms
                   .filter((platform) => (getVisibleIMPlatforms(i18nService.getLanguage()) as readonly string[]).includes(platform))
                   .map((platform) => {
-                    if (MULTI_INSTANCE_PLATFORMS.includes(platform)) {
+                    if (isMultiInstancePlatform(platform)) {
                       return renderMultiInstancePlatform(platform);
                     }
                     return renderSingleInstancePlatform(platform);

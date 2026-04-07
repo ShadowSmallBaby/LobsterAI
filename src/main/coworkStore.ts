@@ -1,14 +1,15 @@
-import { app } from 'electron';
+import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import { app } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
+
 import {
+  type CoworkMemoryGuardLevel,
   extractTurnMemoryChanges,
   isQuestionLikeMemoryText,
-  type CoworkMemoryGuardLevel,
 } from './libs/coworkMemoryExtractor';
 import { judgeMemoryCandidate } from './libs/coworkMemoryJudge';
 
@@ -1957,6 +1958,17 @@ export class CoworkStore {
     return this.getAgent(id)!;
   }
 
+  backfillEmptyAgentModels(modelId: string): number {
+    const normalizedModelId = modelId.trim();
+    if (!normalizedModelId) return 0;
+
+    const result = this.db
+      .prepare('UPDATE agents SET model = ?, updated_at = ? WHERE TRIM(COALESCE(model, \'\')) = \'\'')
+      .run(normalizedModelId, Date.now());
+
+    return result.changes;
+  }
+
   updateAgent(id: string, updates: UpdateAgentRequest): Agent | null {
     const existing = this.getAgent(id);
     if (!existing) return null;
@@ -2000,7 +2012,6 @@ export class CoworkStore {
 
     values.push(id);
     this.db.prepare(`UPDATE agents SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
-
     return this.getAgent(id);
   }
 

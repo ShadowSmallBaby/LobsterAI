@@ -1,5 +1,4 @@
 import { PlatformRegistry } from '@shared/platform';
-import { OpenClawProviderId, ProviderRegistry } from '@shared/providers/constants';
 import React, { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -13,14 +12,9 @@ import { i18nService } from '../../services/i18n';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { RootState } from '../../store';
 import type { Model } from '../../store/slices/modelSlice';
+import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import ModelSelector from '../ModelSelector';
 import { formatScheduleLabel, type PlanType, scheduleToPlanInfo } from './utils';
-
-function toOpenClawModelRef(model: { id: string; providerKey?: string; isServerModel?: boolean }): string {
-  if (model.isServerModel) return `${OpenClawProviderId.LobsteraiServer}/${model.id}`;
-  const openClawId = ProviderRegistry.getOpenClawProviderId(model.providerKey ?? '');
-  return `${openClawId}/${model.id}`;
-}
 
 interface TaskFormProps {
   mode: 'create' | 'edit';
