@@ -1,11 +1,8 @@
-import path from 'node:path';
-
 import type { Agent } from '../coworkStore';
 
 type BuildManagedAgentEntriesInput = {
   agents: Agent[];
   fallbackPrimaryModel: string;
-  stateDir?: string;
 };
 
 type ProviderModelCatalog = Record<string, { models: Array<{ id: string }> }>;
@@ -153,7 +150,6 @@ export function resolveQualifiedAgentModelRef(options: {
 export function buildAgentEntry(
   agent: Agent,
   fallbackPrimaryModel: string,
-  options?: { workspace?: string },
 ): Record<string, unknown> {
   const primaryModel = parsePrimaryModelRef(agent.model.trim())?.primaryModel || fallbackPrimaryModel;
 
@@ -167,7 +163,6 @@ export function buildAgentEntry(
       },
     } : {}),
     ...(agent.skillIds && agent.skillIds.length > 0 ? { skills: agent.skillIds } : {}),
-    ...(options?.workspace ? { workspace: options.workspace } : {}),
     model: {
       primary: primaryModel,
     },
@@ -177,12 +172,8 @@ export function buildAgentEntry(
 export function buildManagedAgentEntries({
   agents,
   fallbackPrimaryModel,
-  stateDir,
 }: BuildManagedAgentEntriesInput): Array<Record<string, unknown>> {
   return agents
     .filter((agent) => agent.id !== 'main' && agent.enabled)
-    .map((agent) => buildAgentEntry(agent, fallbackPrimaryModel, stateDir
-      ? { workspace: path.join(stateDir, `workspace-${agent.id}`) }
-      : undefined,
-    ));
+    .map((agent) => buildAgentEntry(agent, fallbackPrimaryModel));
 }
