@@ -1730,218 +1730,54 @@ const IMSettings: React.FC = () => {
                 </button>
               </div>
 
-              {/* Instance Name */}
-              <div>
+              {/* Account Name (read-only, derived from email) */}
+              <div className="flex items-center gap-2">
                 <label className={labelClass}>{i18nService.t('emailInstanceName')}</label>
-                <input
-                  type="text"
-                  value={inst.instanceName}
-                  onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { instanceName: e.target.value } }))}
-                  onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { instanceName: e.target.value })}
-                  placeholder={i18nService.t('emailInstanceNamePlaceholder')}
-                  className={inputClass}
-                />
-              </div>
-
-              {/* Transport Mode */}
-              <div>
-                <label className={labelClass}>{i18nService.t('emailTransportMode')}</label>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-1.5 text-sm text-foreground cursor-pointer">
-                    <input
-                      type="radio"
-                      checked={inst.transport === 'imap'}
-                      onChange={() => {
-                        dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { transport: 'imap' } }));
-                        void imService.persistEmailInstanceConfig(inst.instanceId, { transport: 'imap' });
-                      }}
-                      className="accent-primary"
-                    />
-                    {i18nService.t('emailTransportImap')}
-                  </label>
-                  <label className="flex items-center gap-1.5 text-sm text-foreground cursor-pointer">
-                    <input
-                      type="radio"
-                      checked={inst.transport === 'ws'}
-                      onChange={() => {
-                        dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { transport: 'ws' } }));
-                        void imService.persistEmailInstanceConfig(inst.instanceId, { transport: 'ws' });
-                      }}
-                      className="accent-primary"
-                    />
-                    {i18nService.t('emailTransportWs')}
-                  </label>
-                </div>
+                <span className="text-sm text-foreground">{inst.instanceName || '—'}</span>
               </div>
 
               {/* Email Address */}
               <div>
-                <label className={labelClass}>{i18nService.t('emailAddress')}</label>
+                <label className={labelClass}>{i18nService.t('emailAddress')} <span className="text-red-500">*</span></label>
                 <input
                   type="email"
                   value={inst.email}
-                  onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { email: e.target.value } }))}
-                  onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { email: e.target.value })}
+                  onChange={e => {
+                    const email = e.target.value;
+                    const instanceName = email.split('@')[0] || '';
+                    dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { email, instanceName } }));
+                  }}
+                  onBlur={e => {
+                    const email = e.target.value;
+                    const instanceName = email.split('@')[0] || '';
+                    void imService.persistEmailInstanceConfig(inst.instanceId, { email, instanceName, transport: 'ws' });
+                  }}
                   placeholder={i18nService.t('emailAddressPlaceholder')}
                   className={inputClass}
                 />
               </div>
 
-              {/* IMAP mode fields */}
-              {inst.transport === 'imap' && (
-                <>
-                  <div>
-                    <label className={labelClass}>{i18nService.t('emailPassword')}</label>
-                    <input
-                      type="password"
-                      value={inst.password || ''}
-                      onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { password: e.target.value } }))}
-                      onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { password: e.target.value })}
-                      placeholder={i18nService.t('emailPasswordPlaceholder')}
-                      className={inputClass}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={labelClass}>{i18nService.t('emailImapHost')}</label>
-                      <input
-                        type="text"
-                        value={inst.imapHost || ''}
-                        onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { imapHost: e.target.value } }))}
-                        onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { imapHost: e.target.value })}
-                        placeholder="imap.example.com"
-                        className={inputClass}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelClass}>{i18nService.t('emailImapPort')}</label>
-                      <input
-                        type="number"
-                        value={inst.imapPort ?? ''}
-                        onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { imapPort: parseInt(e.target.value) || undefined } }))}
-                        onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { imapPort: parseInt(e.target.value) || undefined })}
-                        placeholder="993"
-                        className={inputClass}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelClass}>{i18nService.t('emailSmtpHost')}</label>
-                      <input
-                        type="text"
-                        value={inst.smtpHost || ''}
-                        onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { smtpHost: e.target.value } }))}
-                        onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { smtpHost: e.target.value })}
-                        placeholder="smtp.example.com"
-                        className={inputClass}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelClass}>{i18nService.t('emailSmtpPort')}</label>
-                      <input
-                        type="number"
-                        value={inst.smtpPort ?? ''}
-                        onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { smtpPort: parseInt(e.target.value) || undefined } }))}
-                        onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { smtpPort: parseInt(e.target.value) || undefined })}
-                        placeholder="465"
-                        className={inputClass}
-                      />
-                    </div>
-                  </div>
-                  <p className="text-xs text-secondary">{i18nService.t('emailServerConfigHint')}</p>
-                </>
-              )}
-
-              {/* WS mode fields */}
-              {inst.transport === 'ws' && (
-                <div>
-                  <label className={labelClass}>{i18nService.t('emailApiKey')}</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={inst.apiKey || ''}
-                      onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { apiKey: e.target.value } }))}
-                      onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { apiKey: e.target.value })}
-                      placeholder={i18nService.t('emailApiKeyPlaceholder')}
-                      className={`${inputClass} flex-1`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void handleEmailGetApiKey()}
-                      className="px-3 py-2 rounded-lg text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors whitespace-nowrap"
-                    >
-                      {i18nService.t('getApiKey')}
-                    </button>
-                  </div>
-                  <p className="text-xs text-secondary mt-1">{i18nService.t('apiKeyHint')}</p>
+              {/* API Key (always shown, transport is always ws) */}
+              <div>
+                <label className={labelClass}>{i18nService.t('emailApiKey')} <span className="text-red-500">*</span></label>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={inst.apiKey || ''}
+                    onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { apiKey: e.target.value } }))}
+                    onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { apiKey: e.target.value })}
+                    placeholder={i18nService.t('emailApiKeyPlaceholder')}
+                    className={`${inputClass} flex-1`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleEmailGetApiKey()}
+                    className="px-3 py-2 rounded-lg text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors whitespace-nowrap"
+                  >
+                    {i18nService.t('getApiKey')}
+                  </button>
                 </div>
-              )}
-
-              {/* Allow From (whitelist) */}
-              <div>
-                <label className={labelClass}>{i18nService.t('emailAllowFrom')}</label>
-                <input
-                  type="text"
-                  value={(inst.allowFrom ?? []).join(', ')}
-                  onChange={e => dispatch(setEmailInstanceConfig({
-                    instanceId: inst.instanceId,
-                    config: { allowFrom: e.target.value.split(',').map(s => s.trim()).filter(Boolean) },
-                  }))}
-                  onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, {
-                    allowFrom: e.target.value.split(',').map(s => s.trim()).filter(Boolean),
-                  })}
-                  placeholder={i18nService.t('emailAllowFromPlaceholder')}
-                  className={inputClass}
-                />
-                <p className="text-xs text-secondary mt-1">{i18nService.t('emailAllowFromHint')}</p>
-              </div>
-
-              {/* Reply Mode */}
-              <div>
-                <label className={labelClass}>{i18nService.t('emailReplyMode')}</label>
-                <select
-                  value={inst.replyMode ?? 'complete'}
-                  onChange={e => {
-                    const replyMode = e.target.value as EmailInstanceConfig['replyMode'];
-                    dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { replyMode } }));
-                    void imService.persistEmailInstanceConfig(inst.instanceId, { replyMode });
-                  }}
-                  className={inputClass}
-                >
-                  <option value="immediate">{i18nService.t('emailReplyModeImmediate')}</option>
-                  <option value="accumulated">{i18nService.t('emailReplyModeAccumulated')}</option>
-                  <option value="complete">{i18nService.t('emailReplyModeComplete')}</option>
-                </select>
-              </div>
-
-              {/* Reply To */}
-              <div>
-                <label className={labelClass}>{i18nService.t('emailReplyTo')}</label>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-1.5 text-sm text-foreground cursor-pointer">
-                    <input
-                      type="radio"
-                      checked={inst.replyTo === 'sender' || !inst.replyTo}
-                      onChange={() => {
-                        dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { replyTo: 'sender' } }));
-                        void imService.persistEmailInstanceConfig(inst.instanceId, { replyTo: 'sender' });
-                      }}
-                      className="accent-primary"
-                    />
-                    {i18nService.t('emailReplyToSender')}
-                  </label>
-                  <label className="flex items-center gap-1.5 text-sm text-foreground cursor-pointer">
-                    <input
-                      type="radio"
-                      checked={inst.replyTo === 'all'}
-                      onChange={() => {
-                        dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { replyTo: 'all' } }));
-                        void imService.persistEmailInstanceConfig(inst.instanceId, { replyTo: 'all' });
-                      }}
-                      className="accent-primary"
-                    />
-                    {i18nService.t('emailReplyToAll')}
-                  </label>
-                </div>
+                <p className="text-xs text-secondary mt-1">{i18nService.t('apiKeyHint')}</p>
               </div>
 
               {/* Advanced Options */}
@@ -1950,6 +1786,74 @@ const IMSettings: React.FC = () => {
                   {i18nService.t('imAdvancedSettings')}
                 </summary>
                 <div className="mt-2 space-y-3 pl-2 border-l-2 border-border-subtle">
+                  {/* Allow From (whitelist) */}
+                  <div>
+                    <label className={labelClass}>{i18nService.t('emailAllowFrom')}</label>
+                    <input
+                      type="text"
+                      value={(inst.allowFrom ?? ['*']).join(', ')}
+                      onChange={e => dispatch(setEmailInstanceConfig({
+                        instanceId: inst.instanceId,
+                        config: { allowFrom: e.target.value.split(',').map(s => s.trim()).filter(Boolean) },
+                      }))}
+                      onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, {
+                        allowFrom: e.target.value.split(',').map(s => s.trim()).filter(Boolean),
+                      })}
+                      placeholder={i18nService.t('emailAllowFromPlaceholder')}
+                      className={inputClass}
+                    />
+                    <p className="text-xs text-secondary mt-1">{i18nService.t('emailAllowFromHint')}</p>
+                  </div>
+
+                  {/* Reply Mode */}
+                  <div>
+                    <label className={labelClass}>{i18nService.t('emailReplyMode')}</label>
+                    <select
+                      value={inst.replyMode ?? 'complete'}
+                      onChange={e => {
+                        const replyMode = e.target.value as EmailInstanceConfig['replyMode'];
+                        dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { replyMode } }));
+                        void imService.persistEmailInstanceConfig(inst.instanceId, { replyMode });
+                      }}
+                      className={inputClass}
+                    >
+                      <option value="immediate">{i18nService.t('emailReplyModeImmediate')}</option>
+                      <option value="accumulated">{i18nService.t('emailReplyModeAccumulated')}</option>
+                      <option value="complete">{i18nService.t('emailReplyModeComplete')}</option>
+                    </select>
+                  </div>
+
+                  {/* Reply To */}
+                  <div>
+                    <label className={labelClass}>{i18nService.t('emailReplyTo')}</label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-1.5 text-sm text-foreground cursor-pointer">
+                        <input
+                          type="radio"
+                          checked={inst.replyTo === 'sender' || !inst.replyTo}
+                          onChange={() => {
+                            dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { replyTo: 'sender' } }));
+                            void imService.persistEmailInstanceConfig(inst.instanceId, { replyTo: 'sender' });
+                          }}
+                          className="accent-primary"
+                        />
+                        {i18nService.t('emailReplyToSender')}
+                      </label>
+                      <label className="flex items-center gap-1.5 text-sm text-foreground cursor-pointer">
+                        <input
+                          type="radio"
+                          checked={inst.replyTo === 'all'}
+                          onChange={() => {
+                            dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { replyTo: 'all' } }));
+                            void imService.persistEmailInstanceConfig(inst.instanceId, { replyTo: 'all' });
+                          }}
+                          className="accent-primary"
+                        />
+                        {i18nService.t('emailReplyToAll')}
+                      </label>
+                    </div>
+                  </div>
+
                   {/* A2A Config */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
