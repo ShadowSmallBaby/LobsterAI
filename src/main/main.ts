@@ -231,6 +231,18 @@ const buildAvailableOpenClawProviders = (): Record<string, { models: Array<{ id:
   return providerMap;
 };
 
+const normalizeOpenClawModelRef = (modelRef: string): string => {
+  const normalized = modelRef.trim();
+  if (!normalized) return normalized;
+
+  const qualification = resolveQualifiedAgentModelRef({
+    agentModel: normalized,
+    availableProviders: buildAvailableOpenClawProviders(),
+  });
+
+  return qualification.status === 'qualified' ? qualification.primaryModel : normalized;
+};
+
 // Provider IDs that were renamed in past refactors. Any stored agent model ref
 // using an old ID is rewritten to the current ID on startup.
 const RENAMED_PROVIDER_IDS: Record<string, string> = {
@@ -1352,7 +1364,9 @@ const bindCoworkRuntimeForwarder = (): void => {
 const getCoworkEngineRouter = () => {
   if (!coworkEngineRouter) {
     if (!openClawRuntimeAdapter) {
-      openClawRuntimeAdapter = new OpenClawRuntimeAdapter(getCoworkStore(), getOpenClawEngineManager());
+      openClawRuntimeAdapter = new OpenClawRuntimeAdapter(getCoworkStore(), getOpenClawEngineManager(), {
+        normalizeModelRef: normalizeOpenClawModelRef,
+      });
       // Wire up channel session sync for IM conversations via OpenClaw
       try {
         const imManager = getIMGatewayManager();
@@ -3359,6 +3373,9 @@ if (!gotTheLock) {
       }
 
       const patch = sanitizeOpenClawSessionPatch(request.patch);
+      if (patch.model) {
+        patch.model = normalizeOpenClawModelRef(patch.model);
+      }
       const runtime = getCoworkEngineRouter();
       await runtime.patchSession(sessionId, patch);
 
@@ -4605,6 +4622,50 @@ if (!gotTheLock) {
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Token refresh failed' };
     }
+  });
+
+  // OpenAI ChatGPT (Codex) OAuth handlers — see src/main/libs/openaiCodexAuth.ts.
+  // The login flow opens a browser to https://auth.openai.com/oauth/authorize
+  // and listens on http://127.0.0.1:1455/auth/callback for the redirect, then
+  // writes <CODEX_HOME>/auth.json so the OpenClaw runtime can pick it up.
+  ipcMain.handle('openai-codex-oauth:start', async () => {
+    const { startOpenAICodexLogin } = await import('./libs/openaiCodexAuth');
+    try {
+      const tokens = await startOpenAICodexLogin();
+      return {
+        success: true as const,
+        email: tokens.email ?? null,
+        accountId: tokens.accountId ?? null,
+        expiresAt: tokens.expiresAt,
+      };
+    } catch (error) {
+      return {
+        success: false as const,
+        error: error instanceof Error ? error.message : 'ChatGPT login failed',
+      };
+    }
+  });
+
+  ipcMain.handle('openai-codex-oauth:cancel', async () => {
+    const { cancelOpenAICodexLogin } = await import('./libs/openaiCodexAuth');
+    cancelOpenAICodexLogin();
+  });
+
+  ipcMain.handle('openai-codex-oauth:logout', async () => {
+    const { logoutOpenAICodex } = await import('./libs/openaiCodexAuth');
+    logoutOpenAICodex();
+  });
+
+  ipcMain.handle('openai-codex-oauth:status', async () => {
+    const { readOpenAICodexAuthFile } = await import('./libs/openaiCodexAuth');
+    const tokens = readOpenAICodexAuthFile();
+    if (!tokens) return { loggedIn: false as const };
+    return {
+      loggedIn: true as const,
+      email: tokens.email ?? null,
+      accountId: tokens.accountId ?? null,
+      expiresAt: tokens.expiresAt,
+    };
   });
 
   ipcMain.handle('generate-session-title', async (_event, userInput: string | null) => {
@@ -5884,7 +5945,12 @@ if (!gotTheLock) {
       if (currentUseSystemProxy !== previousUseSystemProxy) {
         void applyProxyPreference(currentUseSystemProxy).then(() => {
           if (getOpenClawEngineManager().getStatus().phase === 'running') {
-            void getOpenClawEngineManager().restartGateway();
+            void syncOpenClawConfig({
+              reason: 'system-proxy-changed',
+              restartGatewayIfRunning: false,
+            }).finally(() => {
+              void getOpenClawEngineManager().restartGateway();
+            });
           }
         });
       }
