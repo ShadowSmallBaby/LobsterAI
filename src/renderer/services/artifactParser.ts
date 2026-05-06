@@ -8,6 +8,11 @@ const LANGUAGE_TO_ARTIFACT_TYPE: Record<string, ArtifactType> = {
   jsx: 'react',
   tsx: 'react',
   react: 'react',
+  markdown: 'markdown',
+  md: 'markdown',
+  text: 'text',
+  txt: 'text',
+  plaintext: 'text',
 };
 
 const EXTENSION_TO_ARTIFACT_TYPE: Record<string, ArtifactType> = {
@@ -24,9 +29,19 @@ const EXTENSION_TO_ARTIFACT_TYPE: Record<string, ArtifactType> = {
   '.jsx': 'react',
   '.tsx': 'react',
   '.css': 'code',
+  '.md': 'markdown',
+  '.txt': 'text',
+  '.log': 'text',
+  '.csv': 'document',
+  '.tsv': 'document',
+  '.xls': 'document',
+  '.docx': 'document',
+  '.xlsx': 'document',
+  '.pptx': 'document',
 };
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+const BINARY_DOCUMENT_EXTENSIONS = new Set(['.docx', '.xlsx', '.pptx']);
 
 export function getArtifactTypeFromLanguage(lang: string): ArtifactType | null {
   return LANGUAGE_TO_ARTIFACT_TYPE[lang.toLowerCase()] ?? null;
@@ -38,6 +53,10 @@ export function getArtifactTypeFromExtension(ext: string): ArtifactType | null {
 
 export function isImageExtension(ext: string): boolean {
   return IMAGE_EXTENSIONS.has(ext.toLowerCase());
+}
+
+export function isBinaryDocumentExtension(ext: string): boolean {
+  return BINARY_DOCUMENT_EXTENSIONS.has(ext.toLowerCase());
 }
 
 export function parseCodeBlockArtifacts(
@@ -86,6 +105,57 @@ export function parseCodeBlockArtifacts(
 }
 
 const FILE_LINK_RE = /\[([^\]]+)\]\(file:\/\/([^)]+)\)/g;
+
+const BARE_FILE_PATH_RE = /(?:^|[\s"'`(])(\/?(?:[^\s"'`()\[\]]+\/)*[^\s"'`()\[\]]+\.(?:docx|xlsx|pptx|md|txt|log|csv))(?:[\s"'`)]|$)/gm;
+
+export function parseFilePathsFromText(
+  messageContent: string,
+  messageId: string,
+  sessionId: string,
+  idPrefix = 'artifact-path',
+): Artifact[] {
+  if (!messageContent) return [];
+
+  const artifacts: Artifact[] = [];
+  const re = new RegExp(BARE_FILE_PATH_RE.source, 'gm');
+  let match: RegExpExecArray | null;
+  let index = 0;
+
+  while ((match = re.exec(messageContent)) !== null) {
+    let filePath = match[1];
+
+    if (filePath.startsWith('file:///')) {
+      filePath = filePath.slice(7);
+    } else if (filePath.startsWith('file://')) {
+      filePath = filePath.slice(7);
+    } else if (filePath.startsWith('file:/')) {
+      filePath = filePath.slice(5);
+    }
+
+    const ext = getFileExtension(filePath);
+    const artifactType = getArtifactTypeFromExtension(ext);
+    if (!artifactType) continue;
+
+    const fileName = getFileName(filePath);
+
+    artifacts.push({
+      id: `${idPrefix}-${messageId}-${index}`,
+      messageId,
+      sessionId,
+      type: artifactType,
+      title: fileName,
+      content: '',
+      fileName,
+      filePath,
+      source: 'tool',
+      createdAt: Date.now(),
+    });
+
+    index++;
+  }
+
+  return artifacts;
+}
 
 export function parseFileLinksFromMessage(
   messageContent: string,
@@ -146,6 +216,12 @@ function generateTitle(type: ArtifactType, language: string, content: string): s
       return 'React Component';
     case 'image':
       return 'Image';
+    case 'markdown':
+      return 'Markdown Document';
+    case 'text':
+      return 'Text File';
+    case 'document':
+      return 'Document';
     case 'code':
       return `${language.charAt(0).toUpperCase() + language.slice(1)} Code`;
   }
@@ -204,7 +280,8 @@ export function parseToolArtifact(
 
   const fileName = getFileName(filePath);
   const isImage = isImageExtension(ext);
-  const content = isImage ? '' : (typeof toolInput.content === 'string' ? toolInput.content : '');
+  const isBinaryDoc = isBinaryDocumentExtension(ext);
+  const content = (isImage || isBinaryDoc) ? '' : (typeof toolInput.content === 'string' ? toolInput.content : '');
 
   return {
     id: `artifact-tool-${toolUseMsg.id}`,

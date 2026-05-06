@@ -3,11 +3,14 @@ import React from 'react';
 import type { Artifact } from '@/types/artifact';
 
 import CodeRenderer from './renderers/CodeRenderer';
+import DocumentRenderer from './renderers/DocumentRenderer';
 import HtmlRenderer from './renderers/HtmlRenderer';
 import ImageRenderer from './renderers/ImageRenderer';
+import MarkdownRenderer from './renderers/MarkdownRenderer';
 import MermaidRenderer from './renderers/MermaidRenderer';
 import ReactRenderer from './renderers/ReactRenderer';
 import SvgRenderer from './renderers/SvgRenderer';
+import TextRenderer from './renderers/TextRenderer';
 
 interface ArtifactRendererProps {
   artifact: Artifact;
@@ -78,6 +81,12 @@ const ArtifactRenderer: React.FC<ArtifactRendererProps> = ({ artifact, sessionAr
       return <MermaidRenderer artifact={artifact} />;
     case 'react':
       return <ReactRenderer artifact={artifact} sessionArtifacts={sessionArtifacts} />;
+    case 'markdown':
+      return <MarkdownRenderer artifact={artifact} />;
+    case 'text':
+      return <TextRenderer artifact={artifact} />;
+    case 'document':
+      return <DocumentRenderer artifact={artifact} />;
     case 'code':
       return <CodeRenderer artifact={artifact} />;
     default:

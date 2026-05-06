@@ -14,6 +14,9 @@ const TYPE_ICONS: Record<ArtifactType, string> = {
   mermaid: '📊',
   react: '⚛',
   code: '📄',
+  markdown: '📝',
+  text: '📄',
+  document: '📑',
 };
 
 interface ArtifactBadgeProps {

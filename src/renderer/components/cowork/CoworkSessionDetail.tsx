@@ -11,7 +11,7 @@ import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
-import { getArtifactTypeFromExtension, parseCodeBlockArtifacts, parseFileLinksFromMessage, parseToolArtifact } from '../../services/artifactParser';
+import { getArtifactTypeFromExtension, parseCodeBlockArtifacts, parseFileLinksFromMessage, parseFilePathsFromText, parseToolArtifact } from '../../services/artifactParser';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
@@ -1744,6 +1744,24 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               detected.push(fl);
             }
           }
+
+          const pathArtifacts = parseFilePathsFromText(msg.content, msg.id, sessionId);
+          for (const pa of pathArtifacts) {
+            if (pa.filePath && !seenFilePaths.has(pa.filePath)) {
+              seenFilePaths.add(pa.filePath);
+              detected.push(pa);
+            }
+          }
+        }
+
+        if (msg.type === 'tool_result' && msg.content) {
+          const pathArtifacts = parseFilePathsFromText(msg.content, msg.id, sessionId, 'artifact-toolresult');
+          for (const pa of pathArtifacts) {
+            if (pa.filePath && !seenFilePaths.has(pa.filePath)) {
+              seenFilePaths.add(pa.filePath);
+              detected.push(pa);
+            }
+          }
         }
       }
 
@@ -1774,13 +1792,21 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
       const loadFiles = async () => {
         for (const artifact of toLoad) {
-          const absPath = artifact.filePath!.startsWith('/')
-            ? artifact.filePath!
-            : `${cwd}/${artifact.filePath}`;
+          let rawPath = artifact.filePath!;
+          if (rawPath.startsWith('file:///')) {
+            rawPath = rawPath.slice(7);
+          } else if (rawPath.startsWith('file://')) {
+            rawPath = rawPath.slice(7);
+          } else if (rawPath.startsWith('file:/')) {
+            rawPath = rawPath.slice(5);
+          }
+          const absPath = rawPath.startsWith('/')
+            ? rawPath
+            : `${cwd}/${rawPath}`;
           try {
             const result = await window.electron.dialog.readFileAsDataUrl(absPath);
             if (result?.success && result.dataUrl) {
-              const isTextType = artifact.type !== 'image';
+              const isTextType = artifact.type !== 'image' && artifact.type !== 'document';
               let content = result.dataUrl;
               if (isTextType) {
                 try {
@@ -1794,7 +1820,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               loadedFileIdsRef.current.add(artifact.id);
               dispatch(addArtifact({
                 sessionId,
-                artifact: { ...artifact, content },
+                artifact: { ...artifact, content, filePath: absPath },
               }));
             }
           } catch {
@@ -2672,11 +2698,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             aria-label={i18nService.t('artifactPanelToggle')}
           >
             <ArtifactPanelIcon className="h-4 w-4" open={isPanelOpen} />
-            {sessionArtifacts.length > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-primary text-[10px] text-white leading-none px-1">
-                {sessionArtifacts.length}
-              </span>
-            )}
           </button>
 
           <WindowTitleBar inline className="ml-1" />

@@ -25,6 +25,8 @@ const t = (key: string) => i18nService.t(key);
 
 const BROWSER_OPENABLE_TYPES = new Set<ArtifactType>(['html', 'svg', 'mermaid', 'react']);
 
+const SYSTEM_OPENABLE_TYPES = new Set<ArtifactType>(['document']);
+
 function buildBrowserHtml(artifact: Artifact): string | null {
   switch (artifact.type) {
     case 'html':
@@ -51,6 +53,9 @@ const TYPE_LABELS: Record<ArtifactType, string> = {
   mermaid: 'Mermaid',
   react: 'React',
   code: 'Code',
+  markdown: 'Markdown',
+  text: 'Text',
+  document: 'Document',
 };
 
 const TYPE_ICONS: Record<ArtifactType, string> = {
@@ -60,6 +65,9 @@ const TYPE_ICONS: Record<ArtifactType, string> = {
   mermaid: '📊',
   react: '⚛',
   code: '<>',
+  markdown: '📝',
+  text: '📄',
+  document: '📑',
 };
 
 interface ArtifactPanelProps {
@@ -143,6 +151,20 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({ artifacts }) => {
     }
   }, [selectedArtifact]);
 
+  const handleOpenWithApp = useCallback(() => {
+    if (selectedArtifact?.filePath) {
+      let filePath = selectedArtifact.filePath;
+      if (filePath.startsWith('file:///')) {
+        filePath = filePath.slice(7);
+      } else if (filePath.startsWith('file://')) {
+        filePath = filePath.slice(7);
+      } else if (filePath.startsWith('file:/')) {
+        filePath = filePath.slice(5);
+      }
+      window.electron?.shell?.openPath(filePath);
+    }
+  }, [selectedArtifact]);
+
   return (
     <>
       {/* Drag handle */}
@@ -196,6 +218,15 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({ artifacts }) => {
                   title={t('artifactOpenInBrowser')}
                 >
                   <BrowserIcon />
+                </button>
+              )}
+              {SYSTEM_OPENABLE_TYPES.has(selectedArtifact.type) && selectedArtifact.filePath && (
+                <button
+                  onClick={handleOpenWithApp}
+                  className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
+                  title={t('artifactOpenWithApp')}
+                >
+                  <OpenExternalIcon />
                 </button>
               )}
               {selectedArtifact.filePath && (
@@ -272,6 +303,14 @@ const BrowserIcon = () => (
     <circle cx="8" cy="8" r="6" />
     <ellipse cx="8" cy="8" rx="2.5" ry="6" />
     <path d="M2 8h12" />
+  </svg>
+);
+
+const OpenExternalIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 9v3.5a1.5 1.5 0 01-1.5 1.5h-7A1.5 1.5 0 012 12.5v-7A1.5 1.5 0 013.5 4H7" />
+    <path d="M10 2h4v4" />
+    <path d="M7 9l7-7" />
   </svg>
 );
 

@@ -12,6 +12,9 @@ const TYPE_ICONS: Record<ArtifactType, string> = {
   mermaid: '📊',
   react: '⚛',
   code: '📄',
+  markdown: '📝',
+  text: '📄',
+  document: '📑',
 };
 
 function getShortPath(filePath: string): string {

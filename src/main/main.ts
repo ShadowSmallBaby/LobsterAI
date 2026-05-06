@@ -4759,6 +4759,43 @@ if (!gotTheLock) {
     }
   );
 
+  ipcMain.handle(
+    'dialog:generateThumbnail',
+    async (_event, filePath?: string): Promise<{ success: boolean; dataUrl?: string; error?: string }> => {
+      try {
+        if (typeof filePath !== 'string' || !filePath.trim()) {
+          return { success: false, error: 'Missing file path' };
+        }
+        const resolvedPath = path.resolve(filePath.trim());
+        const stat = await fs.promises.stat(resolvedPath);
+        if (!stat.isFile()) {
+          return { success: false, error: 'Not a file' };
+        }
+        if (process.platform !== 'darwin') {
+          return { success: false, error: 'Thumbnail generation only supported on macOS' };
+        }
+        const { execFile } = await import('child_process');
+        const { promisify } = await import('util');
+        const execFileAsync = promisify(execFile);
+        const tmpDir = path.join(app.getPath('temp'), 'lobsterai-thumbnails');
+        await fs.promises.mkdir(tmpDir, { recursive: true });
+        const baseName = path.basename(resolvedPath);
+        const outputFile = path.join(tmpDir, `${baseName}.png`);
+        try { await fs.promises.unlink(outputFile); } catch { /* ignore */ }
+        await execFileAsync('qlmanage', ['-t', '-s', '1200', '-o', tmpDir, resolvedPath]);
+        const thumbBuffer = await fs.promises.readFile(outputFile);
+        const base64 = thumbBuffer.toString('base64');
+        try { await fs.promises.unlink(outputFile); } catch { /* ignore */ }
+        return { success: true, dataUrl: `data:image/png;base64,${base64}` };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to generate thumbnail',
+        };
+      }
+    }
+  );
+
   // Shell handlers - 打开文件/文件夹
   ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
     try {
