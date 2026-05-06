@@ -13,6 +13,8 @@ import {
   DEFAULT_DINGTALK_OPENCLAW_CONFIG,
   DEFAULT_DISCORD_MULTI_INSTANCE_CONFIG,
   DEFAULT_DISCORD_OPENCLAW_CONFIG,
+  DEFAULT_EMAIL_INSTANCE_CONFIG,
+  DEFAULT_EMAIL_MULTI_INSTANCE_CONFIG,
   DEFAULT_FEISHU_MULTI_INSTANCE_CONFIG,
   DEFAULT_FEISHU_OPENCLAW_CONFIG,
   DEFAULT_IM_SETTINGS,
@@ -20,10 +22,11 @@ import {
   DEFAULT_NIM_CONFIG,
   DEFAULT_NIM_MULTI_INSTANCE_CONFIG,
   DEFAULT_POPO_CONFIG,
+  DEFAULT_POPO_MULTI_INSTANCE_CONFIG,
   DEFAULT_QQ_CONFIG,
   DEFAULT_QQ_MULTI_INSTANCE_CONFIG,
-  DEFAULT_TELEGRAM_OPENCLAW_CONFIG,
   DEFAULT_TELEGRAM_MULTI_INSTANCE_CONFIG,
+  DEFAULT_TELEGRAM_OPENCLAW_CONFIG,
   DEFAULT_WECOM_CONFIG,
   DEFAULT_WECOM_MULTI_INSTANCE_CONFIG,
   DEFAULT_WEIXIN_CONFIG,
@@ -33,6 +36,8 @@ import {
   DiscordInstanceConfig,
   DiscordMultiInstanceConfig,
   DiscordOpenClawConfig,
+  EmailInstanceConfig,
+  EmailMultiInstanceConfig,
   FeishuInstanceConfig,
   FeishuMultiInstanceConfig,
   FeishuOpenClawConfig,
@@ -44,21 +49,19 @@ import {
   NimInstanceConfig,
   NimMultiInstanceConfig,
   Platform,
+  PopoInstanceConfig,
+  PopoMultiInstanceConfig,
   PopoOpenClawConfig,
   QQConfig,
   QQInstanceConfig,
   QQMultiInstanceConfig,
-  TelegramOpenClawConfig,
   TelegramInstanceConfig,
   TelegramMultiInstanceConfig,
+  TelegramOpenClawConfig,
   WecomInstanceConfig,
   WecomMultiInstanceConfig,
   WecomOpenClawConfig,
   WeixinOpenClawConfig,
-  EmailMultiInstanceConfig,
-  EmailInstanceConfig,
-  DEFAULT_EMAIL_MULTI_INSTANCE_CONFIG,
-  DEFAULT_EMAIL_INSTANCE_CONFIG,
 } from './types';
 
 interface StoredConversationReplyRoute {
@@ -522,6 +525,57 @@ export class IMStore {
       }
     }
 
+    // Migrate single popo config to multi-instance format
+    const oldPopoSingleRow = this.db
+      .prepare('SELECT value FROM im_config WHERE key = ?')
+      .get('popo') as { value: string } | undefined;
+    const existingPopoInstances = this.db
+      .prepare('SELECT key FROM im_config WHERE key LIKE ?')
+      .all('popo:%') as Array<{ key: string }>;
+    if (oldPopoSingleRow && !existingPopoInstances.length) {
+      try {
+        const oldPopoConfig = JSON.parse(oldPopoSingleRow.value) as PopoOpenClawConfig;
+        const popoInstanceId = randomUUID();
+        const popoInstanceConfig: PopoInstanceConfig = {
+          ...DEFAULT_POPO_CONFIG,
+          ...oldPopoConfig,
+          instanceId: popoInstanceId,
+          instanceName: 'POPO Bot 1',
+        };
+        const now = Date.now();
+        this.db
+          .prepare('INSERT INTO im_config (key, value, updated_at) VALUES (?, ?, ?)')
+          .run(`popo:${popoInstanceId}`, JSON.stringify(popoInstanceConfig), now);
+        this.db.prepare('DELETE FROM im_config WHERE key = ?').run('popo');
+        // Migrate session mappings
+        this.db
+          .prepare('UPDATE im_session_mappings SET platform = ? WHERE platform = ?')
+          .run(`popo:${popoInstanceId}`, 'popo');
+        // Migrate agent bindings
+        const settingsRowPopo = this.db
+          .prepare('SELECT value FROM im_config WHERE key = ?')
+          .get('settings') as { value: string } | undefined;
+        if (settingsRowPopo) {
+          try {
+            const settings = JSON.parse(settingsRowPopo.value) as IMSettings;
+            if (settings.platformAgentBindings?.['popo']) {
+              settings.platformAgentBindings[`popo:${popoInstanceId}`] =
+                settings.platformAgentBindings['popo'];
+              delete settings.platformAgentBindings['popo'];
+              this.db
+                .prepare('UPDATE im_config SET value = ?, updated_at = ? WHERE key = ?')
+                .run(JSON.stringify(settings), now, 'settings');
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+        console.log('[IMStore] Migrated single POPO config to multi-instance format');
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
     // Migrate 'xiaomifeng' config key to 'netease-bee'
     const oldXmfRow = this.db
       .prepare('SELECT value FROM im_config WHERE key = ?')
@@ -773,7 +827,7 @@ export class IMStore {
     const qqMulti = this.getQQMultiInstanceConfig();
     const feishuMulti = this.getFeishuMultiInstanceConfig();
     const wecomMulti = this.getWecomMultiInstanceConfig();
-    const popo = this.getConfigValue<PopoOpenClawConfig>('popo') ?? DEFAULT_POPO_CONFIG;
+    const popoMulti = this.getPopoMultiInstanceConfig();
     const weixin = this.getConfigValue<WeixinOpenClawConfig>('weixin') ?? DEFAULT_WEIXIN_CONFIG;
     const settings = this.getConfigValue<IMSettings>('settings') ?? DEFAULT_IM_SETTINGS;
     const email = this.getEmailConfig();
@@ -798,7 +852,7 @@ export class IMStore {
       'netease-bee': resolveEnabled(neteaseBeeChan, DEFAULT_NETEASE_BEE_CONFIG),
       qq: qqMulti,
       wecom: wecomMulti,
-      popo: resolveEnabled(popo, DEFAULT_POPO_CONFIG),
+      popo: popoMulti,
       weixin: resolveEnabled(weixin, DEFAULT_WEIXIN_CONFIG),
       email,
       settings: { ...DEFAULT_IM_SETTINGS, ...settings },
@@ -831,7 +885,7 @@ export class IMStore {
       this.setWecomMultiInstanceConfig(config.wecom);
     }
     if (config.popo) {
-      this.setPopoConfig(config.popo);
+      this.setPopoMultiInstanceConfig(config.popo);
     }
     if (config.weixin) {
       this.setWeixinConfig(config.weixin);
@@ -1396,14 +1450,74 @@ export class IMStore {
 
   // ==================== POPO ====================
 
+  /** @deprecated Use getPopoMultiInstanceConfig() or getPopoInstances() instead */
   getPopoConfig(): PopoOpenClawConfig {
     const stored = this.getConfigValue<PopoOpenClawConfig>('popo');
     return { ...DEFAULT_POPO_CONFIG, ...stored };
   }
 
+  /** @deprecated Use setPopoInstanceConfig() instead */
   setPopoConfig(config: Partial<PopoOpenClawConfig>): void {
     const current = this.getPopoConfig();
     this.setConfigValue('popo', { ...current, ...config });
+  }
+
+  // ==================== POPO Multi-Instance Config ====================
+
+  getPopoInstances(): PopoInstanceConfig[] {
+    const rows = this.db
+      .prepare('SELECT key, value FROM im_config WHERE key LIKE ?')
+      .all('popo:%') as Array<{ key: string; value: string }>;
+    if (!rows.length) return [];
+    const instances: PopoInstanceConfig[] = [];
+    for (const row of rows) {
+      try {
+        const config = JSON.parse(row.value) as PopoInstanceConfig;
+        instances.push({ ...DEFAULT_POPO_CONFIG, ...config });
+      } catch {
+        // Ignore parse errors
+      }
+    }
+    return instances;
+  }
+
+  getPopoInstanceConfig(instanceId: string): PopoInstanceConfig | null {
+    const stored = this.getConfigValue<PopoInstanceConfig>(`popo:${instanceId}`);
+    if (!stored) return null;
+    return { ...DEFAULT_POPO_CONFIG, ...stored };
+  }
+
+  setPopoInstanceConfig(instanceId: string, config: Partial<PopoInstanceConfig>): void {
+    const current = this.getPopoInstanceConfig(instanceId);
+    if (current) {
+      this.setConfigValue(`popo:${instanceId}`, { ...current, ...config });
+    } else {
+      this.setConfigValue(`popo:${instanceId}`, {
+        ...DEFAULT_POPO_CONFIG,
+        instanceId,
+        instanceName: config.instanceName || 'POPO Bot',
+        ...config,
+      });
+    }
+  }
+
+  deletePopoInstance(instanceId: string): void {
+    this.db.prepare('DELETE FROM im_config WHERE key = ?').run(`popo:${instanceId}`);
+    this.db
+      .prepare('DELETE FROM im_session_mappings WHERE platform = ?')
+      .run(`popo:${instanceId}`);
+  }
+
+  getPopoMultiInstanceConfig(): PopoMultiInstanceConfig {
+    const instances = this.getPopoInstances();
+    if (instances.length === 0) return DEFAULT_POPO_MULTI_INSTANCE_CONFIG;
+    return { instances };
+  }
+
+  setPopoMultiInstanceConfig(config: PopoMultiInstanceConfig): void {
+    for (const inst of config.instances) {
+      this.setPopoInstanceConfig(inst.instanceId, inst);
+    }
   }
 
   // ==================== Weixin (微信) ====================

@@ -12,7 +12,7 @@ import {
 } from '../../shared/providers';
 import type { Agent, CoworkConfig, CoworkExecutionMode } from '../coworkStore';
 import type { DiscordInstanceConfig, IMSettings, TelegramInstanceConfig } from '../im/types';
-import type { DingTalkInstanceConfig, EmailMultiInstanceConfig, FeishuInstanceConfig, NeteaseBeeChanConfig, NimInstanceConfig, PopoOpenClawConfig, QQInstanceConfig, WecomInstanceConfig, WeixinOpenClawConfig } from '../im/types';
+import type { DingTalkInstanceConfig, EmailMultiInstanceConfig, FeishuInstanceConfig, NeteaseBeeChanConfig, NimInstanceConfig, PopoInstanceConfig, QQInstanceConfig, WecomInstanceConfig, WeixinOpenClawConfig } from '../im/types';
 import { OpenClawSessionKeepAlive } from '../openclawSessionPolicy/constants';
 import { buildOpenClawSessionConfig } from '../openclawSessionPolicy/store';
 import {
@@ -964,7 +964,7 @@ type OpenClawConfigSyncDeps = {
   getFeishuInstances?: () => FeishuInstanceConfig[];
   getQQInstances?: () => QQInstanceConfig[];
   getWecomInstances?: () => WecomInstanceConfig[];
-  getPopoConfig: () => PopoOpenClawConfig | null;
+  getPopoInstances: () => PopoInstanceConfig[];
   getEmailOpenClawConfig?: () => EmailMultiInstanceConfig;
   getNimInstances?: () => NimInstanceConfig[];
   getNeteaseBeeChanConfig: () => NeteaseBeeChanConfig | null;
@@ -987,7 +987,7 @@ export class OpenClawConfigSync {
   private readonly getFeishuInstances: () => FeishuInstanceConfig[];
   private readonly getQQInstances: () => QQInstanceConfig[];
   private readonly getWecomInstances: () => WecomInstanceConfig[];
-  private readonly getPopoConfig: () => PopoOpenClawConfig | null;
+  private readonly getPopoInstances: () => PopoInstanceConfig[];
   private readonly getEmailOpenClawConfig?: () => EmailMultiInstanceConfig;
   private readonly getNimInstances: () => NimInstanceConfig[];
   private readonly getNeteaseBeeChanConfig: () => NeteaseBeeChanConfig | null;
@@ -1011,7 +1011,7 @@ export class OpenClawConfigSync {
     this.getFeishuInstances = deps.getFeishuInstances ?? (() => []);
     this.getQQInstances = deps.getQQInstances ?? (() => []);
     this.getWecomInstances = deps.getWecomInstances ?? (() => []);
-    this.getPopoConfig = deps.getPopoConfig;
+    this.getPopoInstances = deps.getPopoInstances;
     this.getEmailOpenClawConfig = deps.getEmailOpenClawConfig;
     this.getNimInstances = deps.getNimInstances ?? (() => []);
     this.getNeteaseBeeChanConfig = deps.getNeteaseBeeChanConfig;
@@ -1255,7 +1255,7 @@ export class OpenClawConfigSync {
 
     const wecomInstances = this.getWecomInstances();
 
-    const popoConfig = this.getPopoConfig();
+    const popoInstances = this.getPopoInstances();
 
     const emailConfig = this.getEmailOpenClawConfig?.();
 
@@ -1417,7 +1417,7 @@ export class OpenClawConfigSync {
                   return feishuInstances.some(i => i.enabled && i.appId);
                 if (pluginMatches(plugin, 'openclaw-qqbot')) return qqInstances.some(i => i.enabled && i.appId);
                 if (pluginMatches(plugin, 'wecom-openclaw-plugin')) return wecomInstances.some(i => i.enabled && i.botId);
-                if (pluginMatches(plugin, 'moltbot-popo')) return !!(popoConfig?.enabled && popoConfig.appKey);
+                if (pluginMatches(plugin, 'moltbot-popo')) return popoInstances.some(i => i.enabled && i.appKey);
                 if (pluginMatches(plugin, 'openclaw-nim-channel', NIM_CHANNEL_PLUGIN_ID, 'nim'))
                   return nimInstances.some(i => i.enabled && ((i.nimToken && i.nimToken.trim()) || (i.appKey && i.account && i.token)));
                 if (pluginMatches(plugin, 'openclaw-netease-bee')) return !!(neteaseBeeChanConfig?.enabled && neteaseBeeChanConfig.clientId && neteaseBeeChanConfig.secret);
@@ -1779,52 +1779,61 @@ export class OpenClawConfigSync {
       };
     }
 
-    // Sync POPO OpenClaw channel config (via moltbot-popo plugin)
-    if (popoConfig?.enabled && popoConfig.appKey) {
-      // Migration: old configs lack connectionMode. If token is set, the user
-      // was using webhook mode; otherwise default to the new websocket mode.
-      const effectiveConnectionMode =
-        popoConfig.connectionMode || (popoConfig.token ? 'webhook' : 'websocket');
-      const isWebSocket = effectiveConnectionMode === 'websocket';
-      const popoChannel: Record<string, unknown> = {
-        enabled: true,
-        connectionMode: effectiveConnectionMode,
-        appKey: popoConfig.appKey,
-        appSecret: '${LOBSTER_POPO_APP_SECRET}',
-        aesKey: popoConfig.aesKey,
-        dmPolicy: popoConfig.dmPolicy || 'open',
-        allowFrom: (() => {
-          const ids = popoConfig.allowFrom?.length ? [...popoConfig.allowFrom] : [];
-          if (popoConfig.dmPolicy === 'open' && !ids.includes('*')) ids.push('*');
-          return ids;
-        })(),
-        groupPolicy: popoConfig.groupPolicy || 'open',
-        groupAllowFrom: (() => {
-          const ids = popoConfig.groupAllowFrom?.length ? [...popoConfig.groupAllowFrom] : [];
-          if (popoConfig.groupPolicy === 'open' && !ids.includes('*')) ids.push('*');
-          return ids;
-        })(),
-      };
-      // Webhook-only fields
-      if (!isWebSocket) {
-        popoChannel.token = '${LOBSTER_POPO_TOKEN}';
-        popoChannel.webhookPort = popoConfig.webhookPort || 3100;
-      }
-      if (popoConfig.textChunkLimit && popoConfig.textChunkLimit !== 3000) {
-        popoChannel.textChunkLimit = popoConfig.textChunkLimit;
-      }
-      if (popoConfig.richTextChunkLimit && popoConfig.richTextChunkLimit !== 5000) {
-        popoChannel.richTextChunkLimit = popoConfig.richTextChunkLimit;
-      }
-      if (!isWebSocket && popoConfig.webhookBaseUrl) {
-        popoChannel.webhookBaseUrl = popoConfig.webhookBaseUrl;
-      }
-      if (!isWebSocket && popoConfig.webhookPath && popoConfig.webhookPath !== '/popo/callback') {
-        popoChannel.webhookPath = popoConfig.webhookPath;
+    // Sync POPO OpenClaw channel config (via moltbot-popo plugin) — multi-instance via accounts
+    const enabledPopoInstances = popoInstances.filter(i => i.enabled && i.appKey);
+    if (enabledPopoInstances.length > 0) {
+      const popoAccounts: Record<string, unknown> = {};
+      for (let idx = 0; idx < enabledPopoInstances.length; idx++) {
+        const inst = enabledPopoInstances[idx];
+        // Migration: old configs lack connectionMode. If token is set, the user
+        // was using webhook mode; otherwise default to the new websocket mode.
+        const effectiveConnectionMode =
+          inst.connectionMode || (inst.token ? 'webhook' : 'websocket');
+        const isWebSocket = effectiveConnectionMode === 'websocket';
+        const secretVar = idx === 0 ? 'LOBSTER_POPO_APP_SECRET' : `LOBSTER_POPO_APP_SECRET_${idx}`;
+        const account: Record<string, unknown> = {
+          enabled: true,
+          name: inst.instanceName,
+          connectionMode: effectiveConnectionMode,
+          appKey: inst.appKey,
+          appSecret: `\${${secretVar}}`,
+          aesKey: inst.aesKey,
+          dmPolicy: inst.dmPolicy || 'open',
+          allowFrom: (() => {
+            const ids = inst.allowFrom?.length ? [...inst.allowFrom] : [];
+            if (inst.dmPolicy === 'open' && !ids.includes('*')) ids.push('*');
+            return ids;
+          })(),
+          groupPolicy: inst.groupPolicy || 'open',
+          groupAllowFrom: (() => {
+            const ids = inst.groupAllowFrom?.length ? [...inst.groupAllowFrom] : [];
+            if (inst.groupPolicy === 'open' && !ids.includes('*')) ids.push('*');
+            return ids;
+          })(),
+        };
+        // Webhook-only fields
+        if (!isWebSocket) {
+          const tokenVar = idx === 0 ? 'LOBSTER_POPO_TOKEN' : `LOBSTER_POPO_TOKEN_${idx}`;
+          account.token = `\${${tokenVar}}`;
+          account.webhookPort = inst.webhookPort || 3100;
+          if (inst.webhookBaseUrl) {
+            account.webhookBaseUrl = inst.webhookBaseUrl;
+          }
+          if (inst.webhookPath && inst.webhookPath !== '/popo/callback') {
+            account.webhookPath = inst.webhookPath;
+          }
+        }
+        if (inst.textChunkLimit && inst.textChunkLimit !== 3000) {
+          account.textChunkLimit = inst.textChunkLimit;
+        }
+        if (inst.richTextChunkLimit && inst.richTextChunkLimit !== 5000) {
+          account.richTextChunkLimit = inst.richTextChunkLimit;
+        }
+        popoAccounts[inst.instanceId.slice(0, 8)] = account;
       }
       managedConfig.channels = {
         ...((managedConfig.channels as Record<string, unknown>) || {}),
-        'moltbot-popo': popoChannel,
+        'moltbot-popo': { enabled: true, accounts: popoAccounts },
       };
     }
 
@@ -2199,18 +2208,27 @@ export class OpenClawConfigSync {
       }
     }
 
-    // POPO
-    const popoConfig = this.getPopoConfig();
-    if (popoConfig?.enabled && popoConfig.appSecret) {
-      env.LOBSTER_POPO_APP_SECRET = popoConfig.appSecret;
-    }
-    if (popoConfig?.enabled && popoConfig.token) {
-      env.LOBSTER_POPO_TOKEN = popoConfig.token;
-    } else if (popoConfig?.enabled) {
-      // Provide non-empty fallback so stale openclaw.json files that still
-      // contain ${LOBSTER_POPO_TOKEN} from a previous webhook config
-      // don't crash the gateway with MissingEnvVarError.
-      env.LOBSTER_POPO_TOKEN = 'unconfigured';
+    // POPO — per-instance secrets (must match sync() indexing: enabled instances only)
+    const enabledPopo = this.getPopoInstances().filter(i => i.enabled && i.appSecret);
+    for (let idx = 0; idx < enabledPopo.length; idx++) {
+      if (idx === 0) {
+        env.LOBSTER_POPO_APP_SECRET = enabledPopo[idx].appSecret;
+        if (enabledPopo[idx].token) {
+          env.LOBSTER_POPO_TOKEN = enabledPopo[idx].token;
+        } else {
+          // Provide non-empty fallback so stale openclaw.json files that still
+          // contain ${LOBSTER_POPO_TOKEN} from a previous webhook config
+          // don't crash the gateway with MissingEnvVarError.
+          env.LOBSTER_POPO_TOKEN = 'unconfigured';
+        }
+      } else {
+        env[`LOBSTER_POPO_APP_SECRET_${idx}`] = enabledPopo[idx].appSecret;
+        if (enabledPopo[idx].token) {
+          env[`LOBSTER_POPO_TOKEN_${idx}`] = enabledPopo[idx].token;
+        } else {
+          env[`LOBSTER_POPO_TOKEN_${idx}`] = 'unconfigured';
+        }
+      }
     }
 
     // Email credentials
@@ -2642,6 +2660,7 @@ export class OpenClawConfigSync {
       wecom: { channel: 'wecom', getInstances: () => this.getWecomInstances() },
       telegram: { channel: 'telegram', getInstances: () => this.getTelegramInstances() },
       discord: { channel: 'discord', getInstances: () => this.getDiscordInstances() },
+      popo: { channel: 'moltbot-popo', getInstances: () => this.getPopoInstances() },
     };
 
     for (const [platform, { channel, getInstances }] of Object.entries(multiInstanceChannels)) {
@@ -2680,7 +2699,6 @@ export class OpenClawConfigSync {
       channel: string;
       platform: string;
     }> = [
-      { getter: () => this.getPopoConfig(), channel: 'moltbot-popo', platform: 'popo' },
       { getter: () => this.getNeteaseBeeChanConfig(), channel: 'netease-bee', platform: 'netease-bee' },
       { getter: () => this.getWeixinConfig(), channel: 'openclaw-weixin', platform: 'weixin' },
     ];

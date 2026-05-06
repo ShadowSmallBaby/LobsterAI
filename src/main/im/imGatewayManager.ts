@@ -511,11 +511,15 @@ export class IMGatewayManager extends EventEmitter {
         lastOutboundAt: null as number | null,
       },
       popo: {
-        connected: Boolean(config.popo?.enabled && config.popo.appKey && config.popo.appSecret && config.popo.aesKey && (config.popo.connectionMode === 'websocket' || config.popo.token)),
-        startedAt: null as number | null,
-        lastError: null as string | null,
-        lastInboundAt: null as number | null,
-        lastOutboundAt: null as number | null,
+        instances: (config.popo?.instances || []).map(inst => ({
+          instanceId: inst.instanceId,
+          instanceName: inst.instanceName,
+          connected: Boolean(inst.enabled && inst.appKey && inst.appSecret && inst.aesKey && (inst.connectionMode === 'websocket' || inst.token)),
+          startedAt: null as number | null,
+          lastError: null as string | null,
+          lastInboundAt: null as number | null,
+          lastOutboundAt: null as number | null,
+        })),
       },
       email: {
         instances: (config.email?.instances || []).map(inst => ({
@@ -936,7 +940,8 @@ export class IMGatewayManager extends EventEmitter {
     if (config.weixin?.enabled) {
       openClawPlatformsToStart.push('weixin');
     }
-    if (config.popo?.enabled && config.popo?.appKey && config.popo?.appSecret && config.popo?.aesKey && (config.popo.connectionMode === 'websocket' || config.popo.token)) {
+    const popoInstances = config.popo?.instances || [];
+    if (popoInstances.some(i => i.enabled && i.appKey && i.appSecret && i.aesKey && (i.connectionMode === 'websocket' || i.token))) {
       openClawPlatformsToStart.push('popo');
     }
     const nimInstances = config.nim?.instances || [];
@@ -1019,9 +1024,10 @@ export class IMGatewayManager extends EventEmitter {
       return Boolean(config.weixin?.enabled);
     }
     if (platform === 'popo') {
-      // POPO runs via OpenClaw; consider it connected when enabled and configured
+      // POPO runs via OpenClaw; consider it connected when any instance is enabled and configured
       const config = this.getConfig();
-      return Boolean(config.popo?.enabled && config.popo.appKey && config.popo.appSecret && config.popo.aesKey && (config.popo.connectionMode === 'websocket' || config.popo.token));
+      const popoInsts = config.popo?.instances || [];
+      return popoInsts.some(i => i.enabled && i.appKey && i.appSecret && i.aesKey && (i.connectionMode === 'websocket' || i.token));
     }
     return false;
   }
@@ -1711,7 +1717,8 @@ export class IMGatewayManager extends EventEmitter {
     const platform: Platform = 'popo';
 
     const mergedConfig = this.buildMergedConfig(configOverride);
-    const popoConfig = mergedConfig.popo;
+    const popoInstances = mergedConfig.popo?.instances || [];
+    const popoConfig = popoInstances.find(i => i.enabled) || popoInstances[0];
 
     // Check 1: Credentials present
     const isWebhookMode = (popoConfig?.connectionMode ?? 'websocket') === 'webhook';
@@ -1855,7 +1862,7 @@ export class IMGatewayManager extends EventEmitter {
       'netease-bee': { ...current['netease-bee'], ...(configOverride['netease-bee'] || {}) },
       wecom: configOverride.wecom || current.wecom,
       weixin: { ...current.weixin, ...(configOverride.weixin || {}) },
-      popo: { ...current.popo, ...(configOverride.popo || {}) },
+      popo: configOverride.popo || current.popo,
       settings: { ...current.settings, ...(configOverride.settings || {}) },
     };
   }
@@ -1926,11 +1933,14 @@ export class IMGatewayManager extends EventEmitter {
       return [];
     }
     if (platform === 'popo') {
+      const popoInsts = config.popo?.instances || [];
+      const popoInst = popoInsts.find(i => i.enabled);
+      if (!popoInst) return ['appKey', 'appSecret', 'aesKey'];
       const fields: string[] = [];
-      if (!config.popo?.appKey) fields.push('appKey');
-      if (!config.popo?.appSecret) fields.push('appSecret');
-      if ((config.popo?.connectionMode ?? 'websocket') === 'webhook' && !config.popo?.token) fields.push('token');
-      if (!config.popo?.aesKey) fields.push('aesKey');
+      if (!popoInst.appKey) fields.push('appKey');
+      if (!popoInst.appSecret) fields.push('appSecret');
+      if ((popoInst.connectionMode ?? 'websocket') === 'webhook' && !popoInst.token) fields.push('token');
+      if (!popoInst.aesKey) fields.push('aesKey');
       return fields;
     }
     const discordInstances = config.discord?.instances || [];
@@ -2012,7 +2022,10 @@ export class IMGatewayManager extends EventEmitter {
     }
 
     if (platform === 'popo') {
-      const { appKey, appSecret, token, aesKey, connectionMode } = config.popo;
+      const popoInsts = config.popo?.instances || [];
+      const popoInst = popoInsts.find(i => i.enabled) || popoInsts[0];
+      if (!popoInst) throw new Error(t('imConfigIncomplete'));
+      const { appKey, appSecret, token, aesKey, connectionMode } = popoInst;
       const isWebhook = (connectionMode ?? 'websocket') === 'webhook';
       if (!appKey || !appSecret || !aesKey || (isWebhook && !token)) {
         throw new Error(t('imConfigIncomplete'));
@@ -2495,7 +2508,7 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'qq') return status.qq.instances?.[0]?.startedAt ?? null;
     if (platform === 'wecom') return status.wecom.instances?.[0]?.startedAt ?? null;
     if (platform === 'weixin') return status.weixin.startedAt;
-    if (platform === 'popo') return status.popo.startedAt;
+    if (platform === 'popo') return status.popo.instances?.[0]?.startedAt ?? null;
     return status.discord.instances?.[0]?.startedAt ?? null;
   }
 
@@ -2508,7 +2521,7 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'qq') return status.qq.instances?.[0]?.lastInboundAt ?? null;
     if (platform === 'wecom') return status.wecom.instances?.[0]?.lastInboundAt ?? null;
     if (platform === 'weixin') return status.weixin.lastInboundAt;
-    if (platform === 'popo') return status.popo.lastInboundAt;
+    if (platform === 'popo') return status.popo.instances?.[0]?.lastInboundAt ?? null;
     return status.discord.instances?.[0]?.lastInboundAt ?? null;
   }
 
@@ -2521,7 +2534,7 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'qq') return status.qq.instances?.[0]?.lastOutboundAt ?? null;
     if (platform === 'wecom') return status.wecom.instances?.[0]?.lastOutboundAt ?? null;
     if (platform === 'weixin') return status.weixin.lastOutboundAt;
-    if (platform === 'popo') return status.popo.lastOutboundAt;
+    if (platform === 'popo') return status.popo.instances?.[0]?.lastOutboundAt ?? null;
     return status.discord.instances?.[0]?.lastOutboundAt ?? null;
   }
 
@@ -2534,7 +2547,7 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'qq') return status.qq.instances?.[0]?.lastError ?? null;
     if (platform === 'wecom') return status.wecom.instances?.[0]?.lastError ?? null;
     if (platform === 'weixin') return status.weixin.lastError;
-    if (platform === 'popo') return status.popo.lastError;
+    if (platform === 'popo') return status.popo.instances?.[0]?.lastError ?? null;
     return status.discord.instances?.[0]?.lastError ?? null;
   }
 

@@ -1083,11 +1083,11 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
           return [];
         }
       },
-      getPopoConfig: () => {
+      getPopoInstances: () => {
         try {
-          return getIMGatewayManager().getConfig().popo;
+          return getIMGatewayManager().getIMStore().getPopoInstances();
           } catch {
-          return null;
+          return [];
         }
       },
       getEmailOpenClawConfig: () => {
@@ -4027,6 +4027,55 @@ if (!gotTheLock) {
       return result;
     } catch (error) {
       return { success: false, message: error instanceof Error ? error.message : 'POPO QR login poll failed' };
+    }
+  });
+
+  ipcMain.handle('im:popo:instance:add', async (_event, name: string) => {
+    try {
+      const instanceId = crypto.randomUUID();
+      const { DEFAULT_POPO_CONFIG: defaults } = await import('./im/types');
+      const instance = {
+        ...defaults,
+        instanceId,
+        instanceName: name || 'POPO Bot',
+      };
+      getIMGatewayManager().getIMStore().setPopoInstanceConfig(instanceId, instance);
+      return { success: true, instance };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to add POPO instance',
+      };
+    }
+  });
+
+  ipcMain.handle('im:popo:instance:delete', async (_event, instanceId: string) => {
+    try {
+      getIMGatewayManager().getIMStore().deletePopoInstance(instanceId);
+      if (getOpenClawEngineManager().getStatus().phase === 'running') {
+        scheduleImConfigSync();
+      }
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to delete POPO instance',
+      };
+    }
+  });
+
+  ipcMain.handle('im:popo:instance:config:set', async (_event, instanceId: string, config: Record<string, unknown>, options?: { syncGateway?: boolean }) => {
+    try {
+      getIMGatewayManager().getIMStore().setPopoInstanceConfig(instanceId, config);
+      if (options?.syncGateway && getOpenClawEngineManager().getStatus().phase === 'running') {
+        scheduleImConfigSync();
+      }
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to set POPO instance config',
+      };
     }
   });
 
