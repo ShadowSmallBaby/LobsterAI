@@ -729,7 +729,7 @@ interface IMGatewayConfig {
   nim: NimMultiInstanceConfig;
   'netease-bee': NeteaseBeeChanConfig;
   wecom: WecomMultiInstanceConfig;
-  popo: PopoOpenClawConfig;
+  popo: PopoMultiInstanceConfig;
   weixin: WeixinOpenClawConfig;
   email: EmailMultiInstanceConfig;
   settings: IMSettings;
@@ -1026,6 +1026,24 @@ interface PopoOpenClawConfig {
   debug: boolean;
 }
 
+interface PopoInstanceConfig extends PopoOpenClawConfig {
+  instanceId: string;
+  instanceName: string;
+}
+
+interface PopoInstanceStatus extends PopoGatewayStatus {
+  instanceId: string;
+  instanceName: string;
+}
+
+interface PopoMultiInstanceConfig {
+  instances: PopoInstanceConfig[];
+}
+
+interface PopoMultiInstanceStatus {
+  instances: PopoInstanceStatus[];
+}
+
 interface WeixinOpenClawConfig {
   enabled: boolean;
   accountId: string;
@@ -1050,7 +1068,7 @@ interface IMGatewayStatus {
   nim: NimMultiInstanceStatus;
   'netease-bee': NeteaseBeeChanGatewayStatus;
   wecom: WecomMultiInstanceStatus;
-  popo: PopoGatewayStatus;
+  popo: PopoMultiInstanceStatus;
   weixin: WeixinGatewayStatus;
   email: EmailMultiInstanceStatus;
 }

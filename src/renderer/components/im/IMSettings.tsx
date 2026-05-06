@@ -137,7 +137,7 @@ const IMSettings: React.FC = () => {
   const [weixinQrUrl, setWeixinQrUrl] = useState<string>('');
   const [weixinQrError, setWeixinQrError] = useState<string>('');
   const weixinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [localIp, setLocalIp] = useState<string>('');
+  const [_localIp, setLocalIp] = useState<string>('');
   const isMountedRef = useRef(true);
 
   // OpenClaw config schema for schema-driven forms
