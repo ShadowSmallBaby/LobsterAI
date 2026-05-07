@@ -3710,6 +3710,7 @@ if (!gotTheLock) {
 
       const shouldSyncOpenClawConfig = normalizedExecutionMode !== undefined
         || normalizedAgentEngine !== undefined
+        || normalizedConfig.workingDirectory !== undefined
         || Object.values(normalizedEmbedding).some(v => v !== undefined);
       if (shouldSyncOpenClawConfig) {
         const syncResult = await syncOpenClawConfig({

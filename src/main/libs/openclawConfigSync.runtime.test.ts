@@ -237,6 +237,8 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.models.providers['openai-codex']).toBeDefined();
     expect(config.models.providers.deepseek).toBeDefined();
     expect(config.agents.defaults.models).toBeUndefined();
+    expect(config.agents.defaults.workspace).toBe(path.join(stateDir, 'workspace-main'));
+    expect(config.agents.defaults.cwd).toBe(path.resolve(tmpDir));
   });
 
   test('merges all server models into existing lobsterai provider and updates image input', async () => {

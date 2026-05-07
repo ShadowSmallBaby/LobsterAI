@@ -752,7 +752,7 @@ function syncCoworkConfig(
   try {
     const raw = fs.readFileSync(openclawPath, 'utf-8');
     const config = JSON.parse(raw) as Record<string, unknown>;
-    const agents = config.agents as { defaults?: { sandbox?: { mode?: string }; workspace?: string } } | undefined;
+    const agents = config.agents as { defaults?: { sandbox?: { mode?: string }; workspace?: string; cwd?: string } } | undefined;
     const updates: Record<string, string> = {};
 
     updates.agentEngine = 'openclaw';
@@ -764,8 +764,8 @@ function syncCoworkConfig(
       }
     }
 
-    if (agents?.defaults?.workspace) {
-      updates.workingDirectory = agents.defaults.workspace;
+    if (agents?.defaults?.cwd) {
+      updates.workingDirectory = agents.defaults.cwd;
     }
 
     setConfig(updates);

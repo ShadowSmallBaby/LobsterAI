@@ -124,6 +124,7 @@ function createRunTurnAdapter(options: {
   agentModel?: string;
   cachedModel?: string;
   holdFirstModelPatch?: boolean;
+  sessionCwd?: string;
 } = {}) {
   const session = {
     id: 'session-1',
@@ -131,7 +132,7 @@ function createRunTurnAdapter(options: {
     claudeSessionId: null,
     status: 'completed',
     pinned: false,
-    cwd: '',
+    cwd: options.sessionCwd ?? '',
     systemPrompt: '',
     modelOverride: options.sessionModelOverride ?? '',
     executionMode: 'local',
@@ -303,6 +304,19 @@ test('continueSession waits for an in-flight model patch before chat.send', asyn
     'chat.history',
     'chat.send',
   ]);
+});
+
+test('continueSession sends the session cwd to OpenClaw chat.send', async () => {
+  const { adapter, requests } = createRunTurnAdapter({
+    sessionCwd: '/tmp/lobsterai-selected-project',
+  });
+
+  await adapter.continueSession('session-1', 'hello');
+
+  const chatSend = requests.find((request) => request.method === 'chat.send');
+  expect(chatSend?.params).toMatchObject({
+    cwd: '/tmp/lobsterai-selected-project',
+  });
 });
 
 // ==================== Reconcile tests ====================
