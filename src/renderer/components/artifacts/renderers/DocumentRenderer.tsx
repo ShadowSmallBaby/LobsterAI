@@ -453,7 +453,6 @@ const PdfSubRenderer: React.FC<{ artifact: Artifact }> = ({ artifact }) => {
   const { data, loading, error: loadError } = useFileContent(artifact);
   const [pageCount, setPageCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [renderWidth, setRenderWidth] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -565,7 +564,6 @@ const PdfPageCanvas: React.FC<{
 
     const renderPage = async () => {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const page = await (pdfDoc as any).getPage(pageNumber);
         if (cancelled) return;
 
