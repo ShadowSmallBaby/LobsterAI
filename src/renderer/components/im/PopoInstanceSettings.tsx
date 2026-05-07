@@ -323,7 +323,7 @@ const PopoInstanceSettings: React.FC<PopoInstanceSettingsProps> = ({
           ) : (
             <SignalIcon className="h-3.5 w-3.5" />
           )}
-          {i18nService.t('imTestConnectivity')}
+          {i18nService.t('imConnectivityTest')}
         </button>
         {connectivityResult && (
           <div className="mt-2 space-y-1">
