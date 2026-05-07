@@ -49,6 +49,10 @@ function useFileContent(artifact: Artifact): { data: ArrayBuffer | null; loading
         } else if (filePath.startsWith('file:/')) {
           filePath = filePath.slice(5);
         }
+        // Strip leading / before Windows drive letter
+        if (/^\/[A-Za-z]:/.test(filePath)) {
+          filePath = filePath.slice(1);
+        }
         try {
           const result = await window.electron.dialog.readFileAsDataUrl(filePath);
           if (cancelled) return;
@@ -787,6 +791,8 @@ const PptxHtmlFallback: React.FC<{ artifact: Artifact; data: ArrayBuffer }> = ({
       if (filePath.startsWith('file:///')) filePath = filePath.slice(7);
       else if (filePath.startsWith('file://')) filePath = filePath.slice(7);
       else if (filePath.startsWith('file:/')) filePath = filePath.slice(5);
+      // Strip leading / before Windows drive letter
+      if (/^\/[A-Za-z]:/.test(filePath)) filePath = filePath.slice(1);
 
       const dir = filePath.substring(0, filePath.lastIndexOf('/'));
       const slidesDir = `${dir}/slides`;
