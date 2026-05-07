@@ -3626,14 +3626,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         ?? (typeof (usage as any).cache_read_input_tokens === 'number' ? (usage as any).cache_read_input_tokens : undefined);
       const model = typeof usageMsg.model === 'string' ? usageMsg.model : undefined;
 
-      // Compute contextPercent: promptTokens (input + cacheRead + cacheWrite) / contextWindow
+      // Compute contextPercent: input / contextWindow (matches OpenClaw web UI)
       let contextPercent: number | undefined;
-      const promptTokens = (typeof inputTokens === 'number' ? inputTokens : 0)
-        + (typeof cacheReadTokens === 'number' ? cacheReadTokens : 0);
-      if (promptTokens > 0) {
+      if (typeof inputTokens === 'number' && inputTokens > 0) {
         const contextWindow = this.getContextWindowForModel(model ?? '');
         if (contextWindow && contextWindow > 0) {
-          contextPercent = Math.min(Math.round((promptTokens / contextWindow) * 100), 100);
+          contextPercent = Math.min(Math.round((inputTokens / contextWindow) * 100), 100);
         }
       }
 
@@ -3687,12 +3685,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     cacheReadTokens?: number | undefined,
   ): Promise<void> {
     let contextPercent: number | undefined;
-    const promptTokens = (typeof inputTokens === 'number' ? inputTokens : 0)
-      + (typeof cacheReadTokens === 'number' ? cacheReadTokens : 0);
-    if (promptTokens > 0) {
+    if (typeof inputTokens === 'number' && inputTokens > 0) {
       const contextWindow = this.getContextWindowForModel(model ?? '');
       if (contextWindow && contextWindow > 0) {
-        contextPercent = Math.min(Math.round((promptTokens / contextWindow) * 100), 100);
+        contextPercent = Math.min(Math.round((inputTokens / contextWindow) * 100), 100);
       }
     }
 
