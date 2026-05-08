@@ -13,6 +13,8 @@ export interface GatewayHistoryEntry {
 }
 
 const HEARTBEAT_ACK_RE = /^[`*_~"'“”‘’()[\]{}<>.,!?;:，。！？；：\s-]{0,8}HEARTBEAT_OK[`*_~"'“”‘’()[\]{}<>.,!?;:，。！？；：\s-]{0,8}$/i;
+const SILENT_REPLY_RE = /^\s*NO_REPLY\s*$/i;
+const SILENT_REPLY_TOKEN = 'NO_REPLY';
 const HEARTBEAT_PROMPT_MARKERS = [
   'read heartbeat.md if it exists',
   'when reading heartbeat.md',
@@ -97,6 +99,19 @@ export const buildScheduledReminderSystemMessage = (text: string): string | null
 
 export const isHeartbeatAckText = (text: string): boolean => HEARTBEAT_ACK_RE.test(text.trim());
 
+export const isSilentReplyText = (text: string): boolean => SILENT_REPLY_RE.test(text.trim());
+
+export const isSilentReplyPrefixText = (text: string): boolean => {
+  const trimmed = text.trimStart();
+  if (!trimmed || trimmed.length < 2) return false;
+  if (trimmed !== trimmed.toUpperCase()) return false;
+  if (/[^A-Z_]/.test(trimmed)) return false;
+  const tokenUpper = SILENT_REPLY_TOKEN.toUpperCase();
+  if (!tokenUpper.startsWith(trimmed)) return false;
+  if (trimmed.includes('_')) return true;
+  return trimmed === 'NO';
+};
+
 export const isHeartbeatPromptText = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
   if (!normalized) {
@@ -106,7 +121,7 @@ export const isHeartbeatPromptText = (text: string): boolean => {
 };
 
 export const shouldSuppressHeartbeatText = (role: GatewayHistoryRole, text: string): boolean => {
-  if ((role === 'assistant' || role === 'system') && isHeartbeatAckText(text)) {
+  if ((role === 'assistant' || role === 'system') && (isHeartbeatAckText(text) || isSilentReplyText(text))) {
     return true;
   }
   if (role === 'user' && isHeartbeatPromptText(text)) {

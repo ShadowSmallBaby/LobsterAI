@@ -26,6 +26,8 @@ import {
   extractGatewayHistoryEntries,
   extractGatewayMessageText,
   isHeartbeatAckText,
+  isSilentReplyPrefixText,
+  isSilentReplyText,
   shouldSuppressHeartbeatText,
 } from '../openclawHistory';
 import { buildOpenClawLocalTimeContextPrompt } from '../openclawLocalTimeContextPrompt';
@@ -3221,7 +3223,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       return;
     }
-    if (isHeartbeatAckText(text)) {
+    if (isHeartbeatAckText(text) || isSilentReplyText(text)) {
+      turn.currentText = text;
+      turn.currentAssistantSegmentText = '';
+      if (turn.assistantMessageId) {
+        this.deleteAssistantMessage(sessionId, turn.assistantMessageId);
+        turn.assistantMessageId = null;
+      }
+      return;
+    }
+    if (isSilentReplyPrefixText(text)) {
       turn.currentText = text;
       turn.currentAssistantSegmentText = '';
       if (turn.assistantMessageId) {
@@ -3337,8 +3348,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (!streamedText) return;
-    if (isHeartbeatAckText(streamedText)) {
+    if (isHeartbeatAckText(streamedText) || isSilentReplyText(streamedText)) {
       turn.currentAssistantSegmentText = '';
+      if (turn.assistantMessageId) {
+        this.deleteAssistantMessage(sessionId, turn.assistantMessageId);
+        turn.assistantMessageId = null;
+      }
+      return;
+    }
+    if (isSilentReplyPrefixText(streamedText)) {
+      turn.currentAssistantSegmentText = '';
+      if (turn.assistantMessageId) {
+        this.deleteAssistantMessage(sessionId, turn.assistantMessageId);
+        turn.assistantMessageId = null;
+      }
       return;
     }
     const segmentText = this.resolveAssistantSegmentText(turn, streamedText);
@@ -3390,7 +3413,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       `finalTextLen=${finalText.length}`,
       `finalText="${truncate(finalText, 200)}"`
     );
-    if (isHeartbeatAckText(finalText)) {
+    if (isHeartbeatAckText(finalText) || isSilentReplyText(finalText) || isSilentReplyPrefixText(finalText)) {
       turn.currentText = finalText;
       turn.currentAssistantSegmentText = '';
       if (turn.assistantMessageId) {
@@ -3959,7 +3982,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     );
 
     for (const entry of systemEntries) {
-      if (isHeartbeatAckText(entry.text)) {
+      if (isHeartbeatAckText(entry.text) || isSilentReplyText(entry.text)) {
         continue;
       }
       if (existingSystemTexts.has(entry.text)) {
