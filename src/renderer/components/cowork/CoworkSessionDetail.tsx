@@ -11,7 +11,7 @@ import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
-import { getArtifactTypeFromExtension, normalizeFilePathForDedup, parseCodeBlockArtifacts, parseFileLinksFromMessage, parseFilePathsFromText, parseToolArtifact } from '../../services/artifactParser';
+import { getArtifactTypeFromExtension, normalizeFilePathForDedup, parseCodeBlockArtifacts, parseFileLinksFromMessage, parseFilePathsFromText, parseToolArtifact, stripFileLinksFromText } from '../../services/artifactParser';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
@@ -1815,7 +1815,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             }
           }
 
-          const pathArtifacts = parseFilePathsFromText(msg.content, msg.id, sessionId);
+          const contentWithoutFileLinks = stripFileLinksFromText(msg.content);
+          const pathArtifacts = parseFilePathsFromText(contentWithoutFileLinks, msg.id, sessionId);
           for (const pa of pathArtifacts) {
             const normalized = pa.filePath ? normalizeFilePathForDedup(pa.filePath) : '';
             if (pa.filePath && !seenFilePaths.has(normalized)) {
@@ -1858,7 +1859,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       }
 
       for (const a of detected) {
-        dispatch(addArtifact({ sessionId, artifact: a }));
+        if (!a.filePath) {
+          dispatch(addArtifact({ sessionId, artifact: a }));
+        }
       }
 
       const cwd = currentSession.cwd;
@@ -1903,7 +1906,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               }));
             }
           } catch {
-            // skip unreadable files
+            // File unreadable or missing — skip, don't add to UI
           }
         }
       };
