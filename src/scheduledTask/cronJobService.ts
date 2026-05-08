@@ -14,9 +14,7 @@ import {
   IpcChannel,
   PayloadKind,
   ScheduleKind,
-  SessionTarget,
   TaskStatus,
-  WakeMode,
 } from './constants';
 import type {
   Schedule,
