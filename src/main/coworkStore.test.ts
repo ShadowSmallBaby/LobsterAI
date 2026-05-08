@@ -20,6 +20,7 @@ vi.mock('electron', () => ({
 // ---------------------------------------------------------------------------
 import BetterSqlite3 from 'better-sqlite3';
 
+import { AgentAvatarColor, AgentAvatarGlyph, DefaultAgentAvatarIcon, encodeAgentAvatarIcon } from '../shared/agent/avatar';
 import { CoworkStore } from './coworkStore';
 
 // ---------------------------------------------------------------------------
@@ -258,6 +259,24 @@ test('agent CRUD stores working directory independently', () => {
 
   expect(updated?.workingDirectory).toBe('/tmp/docs-next');
   expect(store.getAgent(agent.id)?.workingDirectory).toBe('/tmp/docs-next');
+});
+
+test('agent CRUD normalizes legacy icons to the default designed avatar', () => {
+  const designedIcon = encodeAgentAvatarIcon({
+    color: AgentAvatarColor.Violet,
+    glyph: AgentAvatarGlyph.Design,
+  });
+
+  const missingIconAgent = store.createAgent({ name: 'Missing Icon Agent' });
+  const legacyIconAgent = store.createAgent({ name: 'Legacy Icon Agent', icon: 'legacy-icon' });
+  const designedIconAgent = store.createAgent({ name: 'Designed Icon Agent', icon: designedIcon });
+
+  expect(missingIconAgent.icon).toBe(DefaultAgentAvatarIcon);
+  expect(legacyIconAgent.icon).toBe(DefaultAgentAvatarIcon);
+  expect(designedIconAgent.icon).toBe(designedIcon);
+
+  const updated = store.updateAgent(designedIconAgent.id, { icon: 'legacy-icon' });
+  expect(updated?.icon).toBe(DefaultAgentAvatarIcon);
 });
 
 test('agent pinning stores first-pinned-first order', () => {

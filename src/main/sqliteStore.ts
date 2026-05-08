@@ -5,7 +5,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 
-import { AgentId, DefaultAgentProfile, LegacyAgentName } from '../shared/agent';
+import { AgentId, DefaultAgentAvatarIcon, DefaultAgentProfile, LegacyAgentName, normalizeAgentAvatarIcon } from '../shared/agent';
 import { DB_FILENAME } from './appConstants';
 import {
   openSqliteDatabaseWithRecovery,
@@ -339,10 +339,10 @@ export class SqliteStore {
           .prepare(
             `
           INSERT INTO agents (id, name, description, system_prompt, identity, model, icon, skill_ids, enabled, is_default, source, preset_id, created_at, updated_at)
-          VALUES (?, ?, '', ?, '', '', '', '[]', 1, 1, 'custom', '', ?, ?)
+          VALUES (?, ?, '', ?, '', '', ?, '[]', 1, 1, 'custom', '', ?, ?)
         `,
           )
-          .run(AgentId.Main, DefaultAgentProfile.Name, existingSystemPrompt, now, now);
+          .run(AgentId.Main, DefaultAgentProfile.Name, existingSystemPrompt, DefaultAgentAvatarIcon, now, now);
       } else {
         const normalizedName = mainAgent.name.trim();
         const shouldUpgradeName = !normalizedName || normalizedName.toLowerCase() === LegacyAgentName.Main;
@@ -355,6 +355,30 @@ export class SqliteStore {
       }
     } catch (error) {
       console.warn('[SqliteStore] failed to ensure default agent:', error);
+    }
+
+    // Migration: Replace legacy text/emoji agent icons with the latest designed default avatar.
+    try {
+      const rows = this.db
+        .prepare('SELECT id, icon FROM agents')
+        .all() as Array<{ id: string; icon: string }>;
+      const updates = rows
+        .map((row) => ({ id: row.id, icon: normalizeAgentAvatarIcon(row.icon) }))
+        .filter((row, index) => row.icon !== rows[index].icon);
+
+      if (updates.length > 0) {
+        const now = Date.now();
+        const updateIcon = this.db.prepare('UPDATE agents SET icon = ?, updated_at = ? WHERE id = ?');
+        const migrateIcons = this.db.transaction((agents: Array<{ id: string; icon: string }>) => {
+          for (const agent of agents) {
+            updateIcon.run(agent.icon, now, agent.id);
+          }
+        });
+        migrateIcons(updates);
+        this.didRunMigration = true;
+      }
+    } catch (error) {
+      console.warn('[SqliteStore] failed to migrate agent avatar icons:', error);
     }
 
     // Migration: Backfill agent working directories from the legacy global cwd once.

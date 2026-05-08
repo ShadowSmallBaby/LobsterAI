@@ -6,6 +6,7 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
+import { normalizeAgentAvatarIcon } from '../shared/agent/avatar';
 import { COWORK_MESSAGE_PAGE_SIZE, COWORK_SESSION_PAGE_SIZE } from '../shared/cowork/constants';
 
 
@@ -1942,7 +1943,7 @@ export class CoworkStore {
         request.identity || '',
         request.model || '',
         request.workingDirectory || '',
-        request.icon || '',
+        normalizeAgentAvatarIcon(request.icon),
         JSON.stringify(request.skillIds || []),
         request.source || 'custom',
         request.presetId || '',
@@ -1998,7 +1999,7 @@ export class CoworkStore {
     }
     if (updates.icon !== undefined) {
       setClauses.push('icon = ?');
-      values.push(updates.icon);
+      values.push(normalizeAgentAvatarIcon(updates.icon));
     }
     if (updates.skillIds !== undefined) {
       setClauses.push('skill_ids = ?');

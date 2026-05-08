@@ -106,3 +106,9 @@ export const parseAgentAvatarIcon = (value: string | null | undefined): Designed
 export const isDesignedAgentAvatarIcon = (value: string | null | undefined): boolean => {
   return parseAgentAvatarIcon(value) !== null;
 };
+
+export const normalizeAgentAvatarIcon = (value: string | null | undefined): string => {
+  const normalized = value?.trim() ?? '';
+  if (isDesignedAgentAvatarIcon(normalized)) return normalized;
+  return DefaultAgentAvatarIcon;
+};

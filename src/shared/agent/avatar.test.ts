@@ -7,6 +7,7 @@ import {
   DefaultAgentAvatarIcon,
   encodeAgentAvatarIcon,
   isDesignedAgentAvatarIcon,
+  normalizeAgentAvatarIcon,
   parseAgentAvatarIcon,
 } from './avatar';
 
@@ -30,6 +31,21 @@ describe('agent avatar icon encoding', () => {
   test('leaves legacy emoji icons untouched', () => {
     expect(parseAgentAvatarIcon('🤖')).toBeNull();
     expect(isDesignedAgentAvatarIcon('🤖')).toBe(false);
+  });
+
+  test('normalizes empty and legacy icons to the default designed avatar', () => {
+    expect(normalizeAgentAvatarIcon('')).toBe(DefaultAgentAvatarIcon);
+    expect(normalizeAgentAvatarIcon('legacy-icon')).toBe(DefaultAgentAvatarIcon);
+    expect(normalizeAgentAvatarIcon('agent-avatar:blue:missing')).toBe(DefaultAgentAvatarIcon);
+  });
+
+  test('preserves valid designed avatars when normalizing', () => {
+    const value = encodeAgentAvatarIcon({
+      color: AgentAvatarColor.Green,
+      glyph: AgentAvatarGlyph.Research,
+    });
+
+    expect(normalizeAgentAvatarIcon(` ${value} `)).toBe(value);
   });
 
   test('rejects malformed designed avatar values', () => {

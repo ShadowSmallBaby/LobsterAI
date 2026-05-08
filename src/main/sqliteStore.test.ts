@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { DefaultAgentProfile } from '../shared/agent';
+import { AgentAvatarColor, AgentAvatarGlyph, DefaultAgentAvatarIcon, DefaultAgentProfile, encodeAgentAvatarIcon } from '../shared/agent';
 
 vi.mock('electron', () => ({
   app: {
@@ -124,6 +124,39 @@ test('upgrades legacy default agent name during migration', async () => {
     .get() as { name: string };
 
   expect(row.name).toBe(DefaultAgentProfile.Name);
+
+  store.close();
+});
+
+test('migrates legacy agent icons to the default designed avatar', async () => {
+  const userDataPath = createTempUserDataPath();
+  createLegacyDatabase(userDataPath);
+
+  const designedIcon = encodeAgentAvatarIcon({
+    color: AgentAvatarColor.Blue,
+    glyph: AgentAvatarGlyph.Code,
+  });
+  const db = new Database(path.join(userDataPath, DB_FILENAME));
+  const now = Date.now();
+  db.prepare("UPDATE agents SET icon = ? WHERE id = 'main'").run('legacy-icon');
+  db.prepare(
+    `INSERT INTO agents (
+      id, name, description, system_prompt, identity, model, icon, skill_ids,
+      enabled, is_default, source, preset_id, created_at, updated_at
+    ) VALUES (?, ?, '', '', '', '', ?, '[]', 1, 0, 'custom', '', ?, ?)`,
+  ).run('code', 'Code', designedIcon, now, now);
+  db.close();
+
+  const store = await SqliteStore.create(userDataPath);
+  const rows = store.getDatabase()
+    .prepare('SELECT id, icon FROM agents ORDER BY id')
+    .all() as Array<{ id: string; icon: string }>;
+
+  expect(rows).toEqual([
+    { id: 'code', icon: designedIcon },
+    { id: 'docs', icon: DefaultAgentAvatarIcon },
+    { id: 'main', icon: DefaultAgentAvatarIcon },
+  ]);
 
   store.close();
 });
