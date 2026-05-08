@@ -1,12 +1,13 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
-import type {
-  CoworkConfig,
-  CoworkMessage,
-  CoworkPermissionRequest,
-  CoworkSession,
-  CoworkSessionStatus,
-  CoworkSessionSummary,
+import {
+  type CoworkConfig,
+  type CoworkMessage,
+  type CoworkPermissionRequest,
+  type CoworkSession,
+  type CoworkSessionStatus,
+  CoworkSessionStatusValue,
+  type CoworkSessionSummary,
 } from '../../types/cowork';
 import { removeSessionFromState, removeSessionsFromState } from './coworkDeleteState';
 
@@ -195,7 +196,11 @@ const coworkSlice = createSlice({
         state.currentSession.status = status;
         state.currentSession.updatedAt = Date.now();
         // Streaming state is tied to the currently opened session only
-        state.isStreaming = status === 'running';
+        state.isStreaming = status === CoworkSessionStatusValue.Running;
+      }
+
+      if (status === CoworkSessionStatusValue.Completed) {
+        markSessionUnread(state, sessionId);
       }
     },
 

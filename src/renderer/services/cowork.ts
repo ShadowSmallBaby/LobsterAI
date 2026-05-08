@@ -31,6 +31,7 @@ import type {
   CoworkMemoryStats,
   CoworkPermissionResult,
   CoworkSession,
+  CoworkSessionListResult,
   CoworkStartOptions,
   CoworkUserMemoryEntry,
   OpenClawEngineStatus,
@@ -228,6 +229,15 @@ class CoworkService {
       store.dispatch(setSessions(result.sessions));
       store.dispatch(setHasMoreSessions(result.hasMore ?? false));
     }
+  }
+
+  async listSessionsForAgentPreview(
+    agentId: string,
+    limit: number,
+    offset: number,
+  ): Promise<CoworkSessionListResult> {
+    const result = await window.electron?.cowork?.listSessions({ limit, offset, agentId });
+    return result ?? { success: false, error: 'Cowork IPC is unavailable' };
   }
 
   async loadMoreSessions(): Promise<boolean> {

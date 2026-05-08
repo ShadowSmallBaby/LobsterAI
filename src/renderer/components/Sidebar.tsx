@@ -2,7 +2,6 @@ import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import { agentService } from '../services/agent';
 import { coworkService } from '../services/cowork';
 import { i18nService } from '../services/i18n';
 import { RootState } from '../store';
@@ -10,9 +9,9 @@ import {
   selectCoworkSessions,
   selectCurrentSessionId,
 } from '../store/selectors/coworkSelectors';
+import MyAgentSidebarTree from './agentSidebar/MyAgentSidebarTree';
 import Modal from './common/Modal';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
-import CoworkSessionList from './cowork/CoworkSessionList';
 import ClockIcon from './icons/ClockIcon';
 import ComposeIcon from './icons/ComposeIcon';
 import ConnectorIcon from './icons/ConnectorIcon';
@@ -20,7 +19,6 @@ import PuzzleIcon from './icons/PuzzleIcon';
 import SearchIcon from './icons/SearchIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import TrashIcon from './icons/TrashIcon';
-import UserGroupIcon from './icons/UserGroupIcon';
 import LoginButton from './LoginButton';
 
 interface SidebarProps {
@@ -39,6 +37,10 @@ interface SidebarProps {
   hideLogin?: boolean;
 }
 
+const DEFAULT_SIDEBAR_WIDTH = 244;
+const MIN_SIDEBAR_WIDTH = 220;
+const MAX_SIDEBAR_WIDTH = 420;
+
 const Sidebar: React.FC<SidebarProps> = ({
   onShowSettings,
   activeView,
@@ -55,38 +57,17 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const sessions = useSelector(selectCoworkSessions);
-  const hasMoreSessions = useSelector((state: RootState) => state.cowork.hasMoreSessions);
   const filteredSessions = sessions.filter(s => !s.agentId || s.agentId === currentAgentId);
   const currentSessionId = useSelector(selectCurrentSessionId);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const sessionListScrollRef = useRef<HTMLDivElement>(null);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const isResizingRef = useRef(false);
+  const resizeStartXRef = useRef(0);
+  const resizeStartWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
   const isMac = window.electron.platform === 'darwin';
-
-  const handleSessionListScroll = useCallback(async () => {
-    const el = sessionListScrollRef.current;
-    if (!el || !hasMoreSessions || isLoadingMore) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 100) {
-      setIsLoadingMore(true);
-      await coworkService.loadMoreSessions();
-      setIsLoadingMore(false);
-    }
-  }, [hasMoreSessions, isLoadingMore]);
-
-  // Auto-load more if content doesn't fill the container (no scrollbar = onScroll never fires)
-  useEffect(() => {
-    const el = sessionListScrollRef.current;
-    if (!el || !hasMoreSessions || isLoadingMore) return;
-    if (el.scrollHeight <= el.clientHeight) {
-      setIsLoadingMore(true);
-      coworkService.loadMoreSessions().finally(() => setIsLoadingMore(false));
-    }
-  }, [hasMoreSessions, isLoadingMore, filteredSessions.length]);
 
   useEffect(() => {
     const handleSearch = () => {
@@ -168,11 +149,49 @@ const Sidebar: React.FC<SidebarProps> = ({
     handleExitBatchMode();
   }, [selectedIds, handleExitBatchMode]);
 
+  const handleResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (isCollapsed) return;
+    event.preventDefault();
+    isResizingRef.current = true;
+    resizeStartXRef.current = event.clientX;
+    resizeStartWidthRef.current = sidebarWidth;
+    document.body.classList.add('select-none');
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const nextWidth = resizeStartWidthRef.current + moveEvent.clientX - resizeStartXRef.current;
+      if (nextWidth < MIN_SIDEBAR_WIDTH) {
+        isResizingRef.current = false;
+        document.body.classList.remove('select-none');
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        onToggleCollapse();
+        return;
+      }
+      setSidebarWidth(Math.min(MAX_SIDEBAR_WIDTH, nextWidth));
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      document.body.classList.remove('select-none');
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [isCollapsed, onToggleCollapse, sidebarWidth]);
+
+  useEffect(() => {
+    return () => {
+      document.body.classList.remove('select-none');
+    };
+  }, []);
+
   return (
     <aside
-      className={`shrink-0 bg-surface-raised flex flex-col sidebar-transition overflow-hidden ${
-        isCollapsed ? 'w-0' : 'w-60'
-      }`}
+      className="relative shrink-0 bg-surface-raised flex flex-col sidebar-transition overflow-hidden"
+      style={{ width: isCollapsed ? 0 : sidebarWidth }}
     >
       <div className="pt-3 pb-3">
         <div className="draggable sidebar-header-drag h-8 flex items-center justify-between px-3">
@@ -190,11 +209,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={onNewChat}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'cowork'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
+            className="w-full inline-flex items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
           >
             <ComposeIcon className="h-4 w-4" />
             {i18nService.t('newChat')}
@@ -205,7 +220,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               onShowCowork();
               setIsSearchOpen(true);
             }}
-            className="w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+            className="w-full inline-flex items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
           >
             <SearchIcon className="h-4 w-4" />
             {i18nService.t('search')}
@@ -216,7 +231,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowScheduledTasks();
             }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+            className={`w-full inline-flex items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium transition-colors ${
               activeView === 'scheduledTasks'
                 ? 'bg-primary/10 text-primary hover:bg-primary/20'
                 : 'text-secondary hover:text-foreground hover:bg-surface-raised'
@@ -231,7 +246,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowSkills();
             }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+            className={`w-full inline-flex items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium transition-colors ${
               activeView === 'skills'
                 ? 'bg-primary/10 text-primary hover:bg-primary/20'
                 : 'text-secondary hover:text-foreground hover:bg-surface-raised'
@@ -246,7 +261,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowMcp();
             }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+            className={`w-full inline-flex items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium transition-colors ${
               activeView === 'mcp'
                 ? 'bg-primary/10 text-primary hover:bg-primary/20'
                 : 'text-secondary hover:text-foreground hover:bg-surface-raised'
@@ -255,54 +270,25 @@ const Sidebar: React.FC<SidebarProps> = ({
             <ConnectorIcon className="h-4 w-4" />
             {i18nService.t('mcpServers')}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setIsSearchOpen(false);
-              onShowAgents();
-            }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'agents'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
-          >
-            <UserGroupIcon className="h-4 w-4" />
-            {i18nService.t('myAgents')}
-          </button>
         </div>
       </div>
-      <div
-        ref={sessionListScrollRef}
-        className="flex-1 overflow-y-auto px-2.5 pb-4"
-        onScroll={handleSessionListScroll}
-      >
-        <SidebarAgentList
-          onShowCowork={onShowCowork}
-          onSessionsLoadingChange={setSessionsLoading}
-        />
-        <div className="px-3 pb-2 text-sm font-medium text-secondary">
-          {i18nService.t('coworkHistory')}
-        </div>
-        <CoworkSessionList
-          sessions={filteredSessions}
-          isLoading={sessionsLoading}
-          currentSessionId={currentSessionId}
+      <div className="flex-1 overflow-y-auto px-2.5 pb-4">
+        <MyAgentSidebarTree
           isBatchMode={isBatchMode}
           selectedIds={selectedIds}
-          onSelectSession={handleSelectSession}
-          onDeleteSession={handleDeleteSession}
-          onTogglePin={handleTogglePin}
-          onRenameSession={handleRenameSession}
+          onShowCowork={onShowCowork}
+          onShowAgents={onShowAgents}
+          onNewChat={onNewChat}
           onToggleSelection={handleToggleSelection}
           onEnterBatchMode={handleEnterBatchMode}
         />
-        {isLoadingMore && (
-          <div className="py-2 text-center text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            {i18nService.t('loading')}
-          </div>
-        )}
       </div>
+      {!isCollapsed && (
+        <div
+          className="non-draggable absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors"
+          onMouseDown={handleResizeStart}
+        />
+      )}
       <CoworkSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
@@ -419,57 +405,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         </Modal>
       )}
     </aside>
-  );
-};
-
-/* ── Simplified agent list for sidebar quick-switch ─── */
-
-const SidebarAgentList: React.FC<{
-  onShowCowork: () => void;
-  onSessionsLoadingChange: (loading: boolean) => void;
-}> = ({ onShowCowork, onSessionsLoadingChange }) => {
-  const agents = useSelector((state: RootState) => state.agent.agents);
-  const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
-
-  useEffect(() => {
-    agentService.loadAgents();
-  }, []);
-
-  const enabledAgents = agents.filter(a => a.enabled);
-
-  const handleSwitch = async (agentId: string) => {
-    if (agentId === currentAgentId) return;
-    agentService.switchAgent(agentId);
-    onShowCowork();
-    onSessionsLoadingChange(true);
-    try {
-      await coworkService.loadSessions(agentId);
-    } finally {
-      onSessionsLoadingChange(false);
-    }
-  };
-
-  return (
-    <div className="px-3 pb-2">
-      <div className="space-y-0.5">
-        {enabledAgents.map(agent => (
-          <div
-            key={agent.id}
-            className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm cursor-pointer transition-colors ${
-              currentAgentId === agent.id
-                ? 'bg-primary/10 text-primary'
-                : 'text-secondary hover:bg-surface-raised'
-            }`}
-            onClick={() => handleSwitch(agent.id)}
-          >
-            <span className="text-base leading-none">
-              {agent.icon || (agent.id === 'main' ? '🦞' : '🤖')}
-            </span>
-            <span className="truncate flex-1 text-xs font-medium">{agent.name}</span>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 };
 

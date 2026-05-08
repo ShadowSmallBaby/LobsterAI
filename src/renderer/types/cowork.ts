@@ -6,7 +6,15 @@ export interface CoworkImageAttachment {
 }
 
 // Cowork session status
-export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';
+export const CoworkSessionStatusValue = {
+  Idle: 'idle',
+  Running: 'running',
+  Completed: 'completed',
+  Error: 'error',
+} as const;
+
+export type CoworkSessionStatus =
+  typeof CoworkSessionStatusValue[keyof typeof CoworkSessionStatusValue];
 
 // Cowork message types
 export type CoworkMessageType = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';

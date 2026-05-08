@@ -1,6 +1,14 @@
 import { expect, test } from 'vitest';
 
-import coworkReducer, { addSession, setConfig, updateCurrentSessionModelOverride } from './coworkSlice';
+import { CoworkSessionStatusValue } from '../../types/cowork';
+import coworkReducer, {
+  addSession,
+  setConfig,
+  setCurrentSessionId,
+  setSessions,
+  updateCurrentSessionModelOverride,
+  updateSessionStatus,
+} from './coworkSlice';
 
 test('defaults hidden OpenClaw session policy to thirty days', () => {
   const state = coworkReducer(undefined, { type: 'init' });
@@ -77,4 +85,51 @@ test('updateCurrentSessionModelOverride only patches the active session', () => 
   );
 
   expect(ignoredState.currentSession?.modelOverride).toBe('lobsterai-server/qwen3.6-plus-YoudaoInner');
+});
+
+test('updateSessionStatus marks completed inactive sessions unread', () => {
+  const state = coworkReducer(undefined, setSessions([{
+    id: 'session-1',
+    title: 'Completed task',
+    status: CoworkSessionStatusValue.Running,
+    pinned: false,
+    agentId: 'main',
+    createdAt: 1,
+    updatedAt: 1,
+  }]));
+
+  const completedState = coworkReducer(
+    state,
+    updateSessionStatus({
+      sessionId: 'session-1',
+      status: CoworkSessionStatusValue.Completed,
+    }),
+  );
+
+  expect(completedState.unreadSessionIds).toEqual(['session-1']);
+});
+
+test('updateSessionStatus does not mark the active completed session unread', () => {
+  const state = coworkReducer(
+    coworkReducer(undefined, setSessions([{
+      id: 'session-1',
+      title: 'Active task',
+      status: CoworkSessionStatusValue.Running,
+      pinned: false,
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 1,
+    }])),
+    setCurrentSessionId('session-1'),
+  );
+
+  const completedState = coworkReducer(
+    state,
+    updateSessionStatus({
+      sessionId: 'session-1',
+      status: CoworkSessionStatusValue.Completed,
+    }),
+  );
+
+  expect(completedState.unreadSessionIds).toEqual([]);
 });
