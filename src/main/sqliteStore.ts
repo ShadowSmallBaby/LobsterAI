@@ -5,6 +5,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 
+import { AgentId, DefaultAgentProfile, LegacyAgentName } from '../shared/agent';
 import { DB_FILENAME } from './appConstants';
 import {
   openSqliteDatabaseWithRecovery,
@@ -79,6 +80,7 @@ export class SqliteStore {
         claude_session_id TEXT,
         status TEXT NOT NULL DEFAULT 'idle',
         pinned INTEGER NOT NULL DEFAULT 0,
+        pin_order INTEGER,
         cwd TEXT NOT NULL,
         system_prompt TEXT NOT NULL DEFAULT '',
         model_override TEXT NOT NULL DEFAULT '',
@@ -208,6 +210,11 @@ export class SqliteStore {
         this.didRunMigration = true;
       }
 
+      if (!colNames.includes('pin_order')) {
+        this.db.exec('ALTER TABLE cowork_sessions ADD COLUMN pin_order INTEGER;');
+        this.didRunMigration = true;
+      }
+
       if (!colNames.includes('active_skill_ids')) {
         this.db.exec('ALTER TABLE cowork_sessions ADD COLUMN active_skill_ids TEXT;');
         this.didRunMigration = true;
@@ -244,8 +251,16 @@ export class SqliteStore {
     }
 
     try {
-      this.db.exec('UPDATE cowork_sessions SET pinned = 0 WHERE pinned IS NULL;');
-      this.didRunMigration = true;
+      const pinnedResult = this.db.prepare('UPDATE cowork_sessions SET pinned = 0 WHERE pinned IS NULL;').run();
+      const pinOrderResult = this.db
+        .prepare('UPDATE cowork_sessions SET pin_order = updated_at WHERE pinned = 1 AND pin_order IS NULL;')
+        .run();
+      const unpinnedResult = this.db
+        .prepare('UPDATE cowork_sessions SET pin_order = NULL WHERE pinned = 0 AND pin_order IS NOT NULL;')
+        .run();
+      if (pinnedResult.changes > 0 || pinOrderResult.changes > 0 || unpinnedResult.changes > 0) {
+        this.didRunMigration = true;
+      }
     } catch {
       // Column might not exist yet.
     }
@@ -276,9 +291,11 @@ export class SqliteStore {
       // Column already exists or migration not needed.
     }
 
-    // Migration: Ensure default 'main' agent exists
+    // Migration: Ensure default agent exists and legacy display values are upgraded.
     try {
-      const mainAgent = this.db.prepare("SELECT id FROM agents WHERE id = 'main'").get();
+      const mainAgent = this.db
+        .prepare('SELECT id, name, icon FROM agents WHERE id = ?')
+        .get(AgentId.Main) as { id: string; name: string; icon: string } | undefined;
       if (!mainAgent) {
         const now = Date.now();
         // Read existing systemPrompt from cowork_config to inherit into main agent
@@ -297,13 +314,22 @@ export class SqliteStore {
           .prepare(
             `
           INSERT INTO agents (id, name, description, system_prompt, identity, model, icon, skill_ids, enabled, is_default, source, preset_id, created_at, updated_at)
-          VALUES ('main', 'main', '', ?, '', '', '', '[]', 1, 1, 'custom', '', ?, ?)
+          VALUES (?, ?, '', ?, '', '', '', '[]', 1, 1, 'custom', '', ?, ?)
         `,
           )
-          .run(existingSystemPrompt, now, now);
+          .run(AgentId.Main, DefaultAgentProfile.Name, existingSystemPrompt, now, now);
+      } else {
+        const normalizedName = mainAgent.name.trim();
+        const shouldUpgradeName = !normalizedName || normalizedName.toLowerCase() === LegacyAgentName.Main;
+        if (shouldUpgradeName) {
+          this.db
+            .prepare('UPDATE agents SET name = ?, updated_at = ? WHERE id = ?')
+            .run(DefaultAgentProfile.Name, Date.now(), AgentId.Main);
+          this.didRunMigration = true;
+        }
       }
     } catch (error) {
-      console.warn('Failed to ensure main agent:', error);
+      console.warn('[SqliteStore] failed to ensure default agent:', error);
     }
 
     // Migration: Backfill agent working directories from the legacy global cwd once.

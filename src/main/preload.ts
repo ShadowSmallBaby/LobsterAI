@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
+import { AgentIpcChannel } from '../shared/agent/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import type { Platform } from '../shared/platform';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
@@ -193,31 +194,35 @@ contextBridge.exposeInMainWorld('electron', {
   },
   agents: {
     list: async () => {
-      const result = await ipcRenderer.invoke('agents:list');
+      const result = await ipcRenderer.invoke(AgentIpcChannel.List);
       return result?.success ? result.agents : [];
     },
     get: async (id: string) => {
-      const result = await ipcRenderer.invoke('agents:get', id);
+      const result = await ipcRenderer.invoke(AgentIpcChannel.Get, id);
       return result?.success ? result.agent : null;
     },
     create: async (request: { id?: string; name: string; description?: string; systemPrompt?: string; identity?: string; model?: string; workingDirectory?: string; icon?: string; skillIds?: string[]; source?: string; presetId?: string }) => {
-      const result = await ipcRenderer.invoke('agents:create', request);
+      const result = await ipcRenderer.invoke(AgentIpcChannel.Create, request);
       return result?.success ? result.agent : null;
     },
     update: async (id: string, updates: { name?: string; description?: string; systemPrompt?: string; identity?: string; model?: string; workingDirectory?: string; icon?: string; skillIds?: string[]; enabled?: boolean }) => {
-      const result = await ipcRenderer.invoke('agents:update', id, updates);
+      const result = await ipcRenderer.invoke(AgentIpcChannel.Update, id, updates);
       return result?.success ? result.agent : null;
     },
     delete: async (id: string) => {
-      const result = await ipcRenderer.invoke('agents:delete', id);
+      const result = await ipcRenderer.invoke(AgentIpcChannel.Delete, id);
       return result?.success ? result.deleted : false;
     },
     presets: async () => {
-      const result = await ipcRenderer.invoke('agents:presets');
+      const result = await ipcRenderer.invoke(AgentIpcChannel.Presets);
+      return result?.success ? result.presets : [];
+    },
+    presetTemplates: async () => {
+      const result = await ipcRenderer.invoke(AgentIpcChannel.PresetTemplates);
       return result?.success ? result.presets : [];
     },
     addPreset: async (presetId: string) => {
-      const result = await ipcRenderer.invoke('agents:addPreset', presetId);
+      const result = await ipcRenderer.invoke(AgentIpcChannel.AddPreset, presetId);
       return result?.success ? result.agent : null;
     },
   },

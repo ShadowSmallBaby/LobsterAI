@@ -28,7 +28,7 @@ export interface PresetAgent {
   systemPrompt: string;
   systemPromptEn: string;
   skillIds: string[];
-  installed: boolean;
+  installed?: boolean;
 }
 
 export interface CreateAgentRequest {

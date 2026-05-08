@@ -1,4 +1,5 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { AgentId } from '@shared/agent';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -10,9 +11,10 @@ import {
   selectCoworkSessions,
   selectCurrentSessionId,
 } from '../store/selectors/coworkSelectors';
+import type { CoworkSessionSummary } from '../types/cowork';
+import MyAgentSidebarTree from './agentSidebar/MyAgentSidebarTree';
 import Modal from './common/Modal';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
-import CoworkSessionList from './cowork/CoworkSessionList';
 import ClockIcon from './icons/ClockIcon';
 import ComposeIcon from './icons/ComposeIcon';
 import ConnectorIcon from './icons/ConnectorIcon';
@@ -20,24 +22,31 @@ import PuzzleIcon from './icons/PuzzleIcon';
 import SearchIcon from './icons/SearchIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import TrashIcon from './icons/TrashIcon';
-import UserGroupIcon from './icons/UserGroupIcon';
 import LoginButton from './LoginButton';
 
 interface SidebarProps {
   onShowSettings: () => void;
   onShowLogin?: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'mcp' | 'agents';
+  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'mcp';
   onShowSkills: () => void;
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowMcp: () => void;
-  onShowAgents: () => void;
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   updateBadge?: React.ReactNode;
   hideLogin?: boolean;
 }
+
+const DEFAULT_SIDEBAR_WIDTH = 244;
+const MIN_SIDEBAR_WIDTH = 220;
+const MAX_SIDEBAR_WIDTH = 420;
+const sidebarNavItemClassName =
+  'w-full inline-flex h-[34px] items-center gap-2 rounded-md px-1.5 text-left text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
+const activeSidebarNavItemClassName =
+  `${sidebarNavItemClassName} bg-black/[0.06] hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.07]`;
+const sidebarCreateIconClassName = 'h-4 w-4 shrink-0 text-secondary/40 dark:text-secondary/45';
 
 const Sidebar: React.FC<SidebarProps> = ({
   onShowSettings,
@@ -46,7 +55,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowCowork,
   onShowScheduledTasks,
   onShowMcp,
-  onShowAgents,
   onNewChat,
   isCollapsed,
   onToggleCollapse,
@@ -55,38 +63,17 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const sessions = useSelector(selectCoworkSessions);
-  const hasMoreSessions = useSelector((state: RootState) => state.cowork.hasMoreSessions);
   const filteredSessions = sessions.filter(s => !s.agentId || s.agentId === currentAgentId);
   const currentSessionId = useSelector(selectCurrentSessionId);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const sessionListScrollRef = useRef<HTMLDivElement>(null);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const isResizingRef = useRef(false);
+  const resizeStartXRef = useRef(0);
+  const resizeStartWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
   const isMac = window.electron.platform === 'darwin';
-
-  const handleSessionListScroll = useCallback(async () => {
-    const el = sessionListScrollRef.current;
-    if (!el || !hasMoreSessions || isLoadingMore) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 100) {
-      setIsLoadingMore(true);
-      await coworkService.loadMoreSessions();
-      setIsLoadingMore(false);
-    }
-  }, [hasMoreSessions, isLoadingMore]);
-
-  // Auto-load more if content doesn't fill the container (no scrollbar = onScroll never fires)
-  useEffect(() => {
-    const el = sessionListScrollRef.current;
-    if (!el || !hasMoreSessions || isLoadingMore) return;
-    if (el.scrollHeight <= el.clientHeight) {
-      setIsLoadingMore(true);
-      coworkService.loadMoreSessions().finally(() => setIsLoadingMore(false));
-    }
-  }, [hasMoreSessions, isLoadingMore, filteredSessions.length]);
 
   useEffect(() => {
     const handleSearch = () => {
@@ -107,21 +94,14 @@ const Sidebar: React.FC<SidebarProps> = ({
     setShowBatchDeleteConfirm(false);
   }, [isCollapsed]);
 
-  const handleSelectSession = async (sessionId: string) => {
+  const handleSelectSession = async (session: CoworkSessionSummary) => {
+    const agentId = session.agentId?.trim() || AgentId.Main;
+    if (agentId !== currentAgentId) {
+      agentService.switchAgent(agentId);
+      await coworkService.loadSessions(agentId);
+    }
     onShowCowork();
-    await coworkService.loadSession(sessionId);
-  };
-
-  const handleDeleteSession = async (sessionId: string) => {
-    await coworkService.deleteSession(sessionId);
-  };
-
-  const handleTogglePin = async (sessionId: string, pinned: boolean) => {
-    await coworkService.setSessionPinned(sessionId, pinned);
-  };
-
-  const handleRenameSession = async (sessionId: string, title: string) => {
-    await coworkService.renameSession(sessionId, title);
+    await coworkService.loadSession(session.id);
   };
 
   const handleEnterBatchMode = useCallback((sessionId: string) => {
@@ -168,11 +148,49 @@ const Sidebar: React.FC<SidebarProps> = ({
     handleExitBatchMode();
   }, [selectedIds, handleExitBatchMode]);
 
+  const handleResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (isCollapsed) return;
+    event.preventDefault();
+    isResizingRef.current = true;
+    resizeStartXRef.current = event.clientX;
+    resizeStartWidthRef.current = sidebarWidth;
+    document.body.classList.add('select-none');
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const nextWidth = resizeStartWidthRef.current + moveEvent.clientX - resizeStartXRef.current;
+      if (nextWidth < MIN_SIDEBAR_WIDTH) {
+        isResizingRef.current = false;
+        document.body.classList.remove('select-none');
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        onToggleCollapse();
+        return;
+      }
+      setSidebarWidth(Math.min(MAX_SIDEBAR_WIDTH, nextWidth));
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      document.body.classList.remove('select-none');
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [isCollapsed, onToggleCollapse, sidebarWidth]);
+
+  useEffect(() => {
+    return () => {
+      document.body.classList.remove('select-none');
+    };
+  }, []);
+
   return (
     <aside
-      className={`shrink-0 bg-surface-raised flex flex-col sidebar-transition overflow-hidden ${
-        isCollapsed ? 'w-0' : 'w-60'
-      }`}
+      className="relative shrink-0 bg-surface-raised flex flex-col sidebar-transition overflow-hidden"
+      style={{ width: isCollapsed ? 0 : sidebarWidth }}
     >
       <div className="pt-3 pb-3">
         <div className="draggable sidebar-header-drag h-8 flex items-center justify-between px-3">
@@ -186,17 +204,13 @@ const Sidebar: React.FC<SidebarProps> = ({
             <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
           </button>
         </div>
-        <div className="mt-3 space-y-1 px-3">
+        <div className="mt-3 space-y-0.5 px-3">
           <button
             type="button"
             onClick={onNewChat}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'cowork'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
+            className={sidebarNavItemClassName}
           >
-            <ComposeIcon className="h-4 w-4" />
+            <ComposeIcon className={sidebarCreateIconClassName} />
             {i18nService.t('newChat')}
           </button>
           <button
@@ -205,9 +219,9 @@ const Sidebar: React.FC<SidebarProps> = ({
               onShowCowork();
               setIsSearchOpen(true);
             }}
-            className="w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+            className={sidebarNavItemClassName}
           >
-            <SearchIcon className="h-4 w-4" />
+            <SearchIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('search')}
           </button>
           <button
@@ -216,13 +230,10 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowScheduledTasks();
             }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'scheduledTasks'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
+            className={activeView === 'scheduledTasks' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === 'scheduledTasks' ? 'page' : undefined}
           >
-            <ClockIcon className="h-4 w-4" />
+            <ClockIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('scheduledTasks')}
           </button>
           <button
@@ -231,13 +242,10 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowSkills();
             }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'skills'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
+            className={activeView === 'skills' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === 'skills' ? 'page' : undefined}
           >
-            <PuzzleIcon className="h-4 w-4" />
+            <PuzzleIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('skills')}
           </button>
           <button
@@ -246,72 +254,35 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowMcp();
             }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'mcp'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
+            className={activeView === 'mcp' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === 'mcp' ? 'page' : undefined}
           >
-            <ConnectorIcon className="h-4 w-4" />
+            <ConnectorIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('mcpServers')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setIsSearchOpen(false);
-              onShowAgents();
-            }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'agents'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
-          >
-            <UserGroupIcon className="h-4 w-4" />
-            {i18nService.t('myAgents')}
           </button>
         </div>
       </div>
-      <div
-        ref={sessionListScrollRef}
-        className="flex-1 overflow-y-auto px-2.5 pb-4"
-        onScroll={handleSessionListScroll}
-      >
-        <SidebarAgentList
-          onShowCowork={onShowCowork}
-          onSessionsLoadingChange={setSessionsLoading}
-        />
-        <div className="px-3 pb-2 text-sm font-medium text-secondary">
-          {i18nService.t('coworkHistory')}
-        </div>
-        <CoworkSessionList
-          sessions={filteredSessions}
-          isLoading={sessionsLoading}
-          currentSessionId={currentSessionId}
+      <div className="scrollbar-hidden flex-1 overflow-y-auto px-2.5 pb-4">
+        <MyAgentSidebarTree
           isBatchMode={isBatchMode}
           selectedIds={selectedIds}
-          onSelectSession={handleSelectSession}
-          onDeleteSession={handleDeleteSession}
-          onTogglePin={handleTogglePin}
-          onRenameSession={handleRenameSession}
+          onShowCowork={onShowCowork}
           onToggleSelection={handleToggleSelection}
           onEnterBatchMode={handleEnterBatchMode}
         />
-        {isLoadingMore && (
-          <div className="py-2 text-center text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            {i18nService.t('loading')}
-          </div>
-        )}
       </div>
+      {!isCollapsed && (
+        <div
+          className="non-draggable absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors"
+          onMouseDown={handleResizeStart}
+        />
+      )}
       <CoworkSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        sessions={filteredSessions}
+        sessions={sessions}
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
-        onDeleteSession={handleDeleteSession}
-        onTogglePin={handleTogglePin}
-        onRenameSession={handleRenameSession}
       />
       {isBatchMode ? (
         <div className="px-3 pb-3 pt-1 flex items-center justify-between">
@@ -419,57 +390,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         </Modal>
       )}
     </aside>
-  );
-};
-
-/* ── Simplified agent list for sidebar quick-switch ─── */
-
-const SidebarAgentList: React.FC<{
-  onShowCowork: () => void;
-  onSessionsLoadingChange: (loading: boolean) => void;
-}> = ({ onShowCowork, onSessionsLoadingChange }) => {
-  const agents = useSelector((state: RootState) => state.agent.agents);
-  const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
-
-  useEffect(() => {
-    agentService.loadAgents();
-  }, []);
-
-  const enabledAgents = agents.filter(a => a.enabled);
-
-  const handleSwitch = async (agentId: string) => {
-    if (agentId === currentAgentId) return;
-    agentService.switchAgent(agentId);
-    onShowCowork();
-    onSessionsLoadingChange(true);
-    try {
-      await coworkService.loadSessions(agentId);
-    } finally {
-      onSessionsLoadingChange(false);
-    }
-  };
-
-  return (
-    <div className="px-3 pb-2">
-      <div className="space-y-0.5">
-        {enabledAgents.map(agent => (
-          <div
-            key={agent.id}
-            className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm cursor-pointer transition-colors ${
-              currentAgentId === agent.id
-                ? 'bg-primary/10 text-primary'
-                : 'text-secondary hover:bg-surface-raised'
-            }`}
-            onClick={() => handleSwitch(agent.id)}
-          >
-            <span className="text-base leading-none">
-              {agent.icon || (agent.id === 'main' ? '🦞' : '🤖')}
-            </span>
-            <span className="truncate flex-1 text-xs font-medium">{agent.name}</span>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 };
 
