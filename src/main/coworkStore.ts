@@ -293,6 +293,10 @@ function parseTimeToMs(input?: string | null): number | null {
   return timestamp;
 }
 
+function normalizeMessageTimestamp(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
 function shouldAutoDeleteMemoryText(text: string): boolean {
   const normalized = normalizeMemoryText(text);
   if (!normalized) return false;
@@ -387,6 +391,13 @@ export interface CoworkMessage {
   content: string;
   timestamp: number;
   metadata?: CoworkMessageMetadata;
+}
+
+export interface CoworkConversationReplacementEntry {
+  role: 'user' | 'assistant';
+  text: string;
+  metadata?: Record<string, unknown>;
+  timestamp?: number;
 }
 
 export interface CoworkSession {
@@ -1102,11 +1113,31 @@ export class CoworkStore {
    */
   replaceConversationMessages(
     sessionId: string,
-    authoritative: Array<{ role: 'user' | 'assistant'; text: string; metadata?: Record<string, unknown> }>,
+    authoritative: CoworkConversationReplacementEntry[],
   ): void {
     const now = Date.now();
 
     this.db.transaction(() => {
+      const existingRows = this.db
+        .prepare(
+          `
+          SELECT type, content, created_at
+          FROM cowork_messages
+          WHERE session_id = ? AND type IN ('user', 'assistant')
+          ORDER BY COALESCE(sequence, created_at) ASC, created_at ASC, ROWID ASC
+        `,
+        )
+        .all(sessionId) as Array<{ type: 'user' | 'assistant'; content: string; created_at: number }>;
+      const existingTimestamps = new Map<string, number[]>();
+      for (const row of existingRows) {
+        const timestamp = normalizeMessageTimestamp(Number(row.created_at));
+        if (timestamp == null) continue;
+        const key = `${row.type}\x1f${row.content}`;
+        const timestamps = existingTimestamps.get(key) ?? [];
+        timestamps.push(timestamp);
+        existingTimestamps.set(key, timestamps);
+      }
+
       // Delete all existing user/assistant messages for this session
       this.db
         .prepare(
@@ -1122,6 +1153,7 @@ export class CoworkStore {
         )
         .get(sessionId) as { max_seq: number } | undefined;
       let nextSeq = (seqRow?.max_seq ?? 0) + 1;
+      const insertedTimestamps: number[] = [];
 
       for (const entry of authoritative) {
         const id = uuidv4();
@@ -1129,6 +1161,13 @@ export class CoworkStore {
         const finalMetadata = entry.metadata
           ? { ...baseMetadata, ...entry.metadata }
           : baseMetadata;
+        const existingKey = `${entry.role}\x1f${entry.text}`;
+        const matchingExistingTimestamps = existingTimestamps.get(existingKey);
+        const existingTimestamp = matchingExistingTimestamps?.shift();
+        const messageTimestamp = normalizeMessageTimestamp(entry.timestamp)
+          ?? existingTimestamp
+          ?? now;
+        insertedTimestamps.push(messageTimestamp);
         this.db
           .prepare(
             `
@@ -1142,12 +1181,15 @@ export class CoworkStore {
             entry.role,
             entry.text,
             JSON.stringify(finalMetadata),
-            now,
+            messageTimestamp,
             nextSeq++,
           );
       }
 
-      this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
+      const updatedAt = insertedTimestamps.length > 0
+        ? insertedTimestamps[insertedTimestamps.length - 1]
+        : now;
+      this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(updatedAt, sessionId);
     })();
   }
 

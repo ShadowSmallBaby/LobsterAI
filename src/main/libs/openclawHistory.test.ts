@@ -54,6 +54,20 @@ describe('openclawHistory', () => {
     });
   });
 
+  test('keeps gateway message timestamps when present', () => {
+    expect(
+      extractGatewayHistoryEntry({
+        role: 'user',
+        content: 'hello',
+        createdAt: '2026-05-09T10:20:30.000Z',
+      })
+    ).toEqual({
+      role: 'user',
+      text: 'hello',
+      timestamp: Date.parse('2026-05-09T10:20:30.000Z'),
+    });
+  });
+
   test('joins text content blocks separated by toolCall blocks', () => {
     const text = extractGatewayMessageText({
       content: [

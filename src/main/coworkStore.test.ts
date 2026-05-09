@@ -128,12 +128,12 @@ function insertMessage(
   content: string,
   metadata: string | null,
   sequence: number,
+  createdAt = Date.now(),
 ): void {
-  const now = Date.now();
   db.prepare(
     `INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, sessionId, type, content, metadata, now, sequence);
+  ).run(id, sessionId, type, content, metadata, createdAt, sequence);
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +169,32 @@ test('getSession returns all messages when one has corrupt metadata', () => {
   // Null metadata → undefined
   const nullMsg = session!.messages.find((m) => m.id === 'msg-null')!;
   expect(nullMsg.metadata).toBeUndefined();
+});
+
+test('replaceConversationMessages preserves existing timestamps and uses gateway timestamps', () => {
+  const sid = 'sess-replace-timestamps';
+  insertSession(sid);
+
+  insertMessage('msg-user', sid, 'user', 'old user', '{}', 1, 1000);
+  insertMessage('msg-assistant', sid, 'assistant', 'old assistant', '{}', 2, 2000);
+
+  store.replaceConversationMessages(sid, [
+    { role: 'user', text: 'old user' },
+    { role: 'assistant', text: 'old assistant' },
+    { role: 'user', text: 'new user', timestamp: 3000 },
+  ]);
+
+  const session = store.getSession(sid);
+  expect(session?.messages.map((message) => ({
+    type: message.type,
+    content: message.content,
+    timestamp: message.timestamp,
+  }))).toEqual([
+    { type: 'user', content: 'old user', timestamp: 1000 },
+    { type: 'assistant', content: 'old assistant', timestamp: 2000 },
+    { type: 'user', content: 'new user', timestamp: 3000 },
+  ]);
+  expect(session?.updatedAt).toBe(3000);
 });
 
 test('getSession returns all messages when ALL have corrupt metadata', () => {

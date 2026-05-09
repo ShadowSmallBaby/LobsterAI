@@ -216,6 +216,13 @@ type ChannelHistorySyncEntry = {
   text: string;
 };
 
+type ReconciledConversationEntry = {
+  role: 'user' | 'assistant';
+  text: string;
+  metadata?: Record<string, unknown>;
+  timestamp?: number;
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 };
@@ -381,6 +388,37 @@ const isSameHistoryEntry = (
   left: { role: 'user' | 'assistant'; text: string },
   right: { role: 'user' | 'assistant'; text: string },
 ): boolean => left.role === right.role && left.text === right.text;
+
+const historyEntryKey = (entry: { role: 'user' | 'assistant'; text: string }): string => {
+  return `${entry.role}\x1f${entry.text}`;
+};
+
+const isValidMessageTimestamp = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+};
+
+const applyLocalTimestampsToEntries = (
+  entries: ReconciledConversationEntry[],
+  localEntries: Array<{ role: 'user' | 'assistant'; text: string; timestamp?: number }>,
+): ReconciledConversationEntry[] => {
+  const localTimestamps = new Map<string, number[]>();
+  for (const entry of localEntries) {
+    if (!isValidMessageTimestamp(entry.timestamp)) continue;
+    const key = historyEntryKey(entry);
+    const timestamps = localTimestamps.get(key) ?? [];
+    timestamps.push(entry.timestamp);
+    localTimestamps.set(key, timestamps);
+  }
+
+  return entries.map((entry) => {
+    if (isValidMessageTimestamp(entry.timestamp)) {
+      return entry;
+    }
+    const timestamps = localTimestamps.get(historyEntryKey(entry));
+    const timestamp = timestamps?.shift();
+    return timestamp != null ? { ...entry, timestamp } : entry;
+  });
+};
 
 /**
  * Find the tail-alignment point between local and authoritative entries.
@@ -4090,7 +4128,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const platformFlags: PlatformFlags = { isDiscord, isQQ, isPopo, isFeishu };
 
       // Extract authoritative user/assistant entries from gateway history
-      const authoritativeEntries: Array<{ role: 'user' | 'assistant'; text: string; metadata?: Record<string, unknown> }> = [];
+      const authoritativeEntries: ReconciledConversationEntry[] = [];
       for (const entry of extractGatewayHistoryEntries(history.messages)) {
         const role = entry.role;
         if (role !== 'user' && role !== 'assistant') continue;
@@ -4110,7 +4148,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             metadata.model = entry.model;
           }
         }
-        authoritativeEntries.push({ role: role as 'user' | 'assistant', text, ...(metadata && { metadata }) });
+        authoritativeEntries.push({
+          role: role as 'user' | 'assistant',
+          text,
+          ...(metadata && { metadata }),
+          ...(entry.timestamp != null && { timestamp: entry.timestamp }),
+        });
       }
 
       // For channel sessions, append file paths from "message" tool calls
@@ -4140,13 +4183,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Apply the same normalization as authoritativeEntries so alignment
       // works even when local messages still carry raw platform prefixes.
       const session = this.store.getSession(sessionId);
-      const localEntries: Array<{ role: 'user' | 'assistant'; text: string }> = [];
+      const localEntries: Array<{ role: 'user' | 'assistant'; text: string; timestamp?: number }> = [];
       if (session) {
         for (const msg of session.messages) {
           if (msg.type !== 'user' && msg.type !== 'assistant') continue;
           const text = normalizeEntryText(msg.type, msg.content, platformFlags);
           if (!text || shouldSuppressHeartbeatText(msg.type, text)) continue;
-          localEntries.push({ role: msg.type, text });
+          localEntries.push({ role: msg.type, text, timestamp: msg.timestamp });
         }
       }
 
@@ -4166,7 +4209,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Tail-alignment: find where the gateway window overlaps local history.
       const alignment = findTailAlignment(localEntries, authoritativeEntries);
 
-      let entriesToStore: Array<{ role: 'user' | 'assistant'; text: string; metadata?: Record<string, unknown> }>;
+      let entriesToStore: ReconciledConversationEntry[];
 
       if (alignment && (alignment.localIdx > 0 || alignment.authIdx > 0)) {
         // Gateway covers only the tail — preserve older local messages
@@ -4204,7 +4247,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         );
       }
 
-      this.store.replaceConversationMessages(sessionId, entriesToStore);
+      this.store.replaceConversationMessages(sessionId, applyLocalTimestampsToEntries(entriesToStore, localEntries));
       this.channelSyncCursor.set(sessionId, authoritativeEntries.length);
 
       // Notify renderer to refresh

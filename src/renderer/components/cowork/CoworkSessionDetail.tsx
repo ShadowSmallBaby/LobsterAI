@@ -1096,6 +1096,23 @@ const ToolCallGroup: React.FC<{
   );
 };
 
+// Message metadata helpers
+const getMessageModelLabel = (metadata?: CoworkMessageMetadata | null): string | null => {
+  const model = typeof metadata?.model === 'string' ? metadata.model.trim() : '';
+  if (!model) return null;
+  return model.includes('/') ? (model.split('/').pop() || model) : model;
+};
+
+const messageMetaClassName = (visible: boolean, align: 'left' | 'right' = 'left'): string => [
+  'flex items-center gap-2 mt-1 text-[11px] text-zinc-400 dark:text-zinc-500 select-none transition-opacity duration-200',
+  align === 'right' ? 'justify-end' : '',
+  visible ? 'opacity-100' : 'opacity-0 pointer-events-none',
+].filter(Boolean).join(' ');
+
+const hasFocusWithin = (element: HTMLElement): boolean => (
+  document.activeElement instanceof Node && element.contains(document.activeElement)
+);
+
 // Copy button component
 const CopyButton: React.FC<{
   content: string;
@@ -1120,7 +1137,9 @@ const CopyButton: React.FC<{
       className={`p-1.5 rounded-md hover:bg-surface-raised transition-all duration-200 ${
         visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
       }`}
+      tabIndex={visible ? 0 : -1}
       title={i18nService.t('copyToClipboard')}
+      aria-label={i18nService.t('copyToClipboard')}
     >
       {copied ? (
         <svg
@@ -1174,6 +1193,7 @@ const ReEditButton: React.FC<{
       className={`p-1.5 rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-all duration-200 ${
         visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
       }`}
+      tabIndex={visible ? 0 : -1}
       title={i18nService.t('coworkReEdit')}
     >
       <svg
@@ -1203,6 +1223,16 @@ export const UserMessageItem: React.FC<{
 }> = React.memo(({ message, skills, onReEdit }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
+  const modelLabel = getMessageModelLabel(message.metadata);
+  const handleBlur = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+    setIsHovered(false);
+  }, []);
+  const handleMouseLeave = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (hasFocusWithin(event.currentTarget)) return;
+    setIsHovered(false);
+  }, []);
 
   useEffect(() => {
     if (!expandedImage) return;
@@ -1228,9 +1258,12 @@ export const UserMessageItem: React.FC<{
 
   return (
     <div
-      className="py-2 px-4"
+      className="py-2 px-4 focus:outline-none"
+      tabIndex={0}
       onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseLeave={handleMouseLeave}
+      onFocus={() => setIsHovered(true)}
+      onBlur={handleBlur}
     >
       <div className="max-w-5xl min-w-[320px] mx-auto">
         <div className="pl-4 sm:pl-8 md:pl-12">
@@ -1264,17 +1297,7 @@ export const UserMessageItem: React.FC<{
                   </div>
                 )}
               </div>
-              <div className="flex items-center justify-end gap-1.5 mt-1">
-                {onReEdit && (
-                  <ReEditButton
-                    visible={isHovered}
-                    onClick={() => onReEdit(message)}
-                  />
-                )}
-                <CopyButton
-                  content={message.content}
-                  visible={isHovered}
-                />
+              <div className={messageMetaClassName(isHovered, 'right')} aria-hidden={!isHovered}>
                 {messageSkills.length > 0 && (
                   <div className="flex items-center gap-1.5 mr-1.5">
                     {messageSkills.map(skill => (
@@ -1291,9 +1314,18 @@ export const UserMessageItem: React.FC<{
                     ))}
                   </div>
                 )}
-                <span className="text-[11px] text-zinc-400 dark:text-zinc-500 select-none">
-                  {formatMessageDateTime(message.timestamp)}
-                </span>
+                <span>{formatMessageDateTime(message.timestamp)}</span>
+                {modelLabel && <span>{modelLabel}</span>}
+                <CopyButton
+                  content={message.content}
+                  visible={isHovered}
+                />
+                {onReEdit && (
+                  <ReEditButton
+                    visible={isHovered}
+                    onClick={() => onReEdit(message)}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -1333,6 +1365,16 @@ const AssistantMessageItem: React.FC<{
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
+  const modelLabel = getMessageModelLabel(turnMetadata);
+  const handleBlur = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+    setIsHovered(false);
+  }, []);
+  const handleMouseLeave = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (hasFocusWithin(event.currentTarget)) return;
+    setIsHovered(false);
+  }, []);
 
   useEffect(() => {
     if (!expandedImage) return;
@@ -1343,9 +1385,12 @@ const AssistantMessageItem: React.FC<{
 
   return (
     <div
-      className="relative"
+      className="relative focus:outline-none"
+      tabIndex={showCopyButton ? 0 : undefined}
       onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseLeave={handleMouseLeave}
+      onFocus={() => setIsHovered(true)}
+      onBlur={handleBlur}
     >
       <div className="text-foreground">
         <MarkdownContent
@@ -1357,11 +1402,9 @@ const AssistantMessageItem: React.FC<{
         />
       </div>
       {showCopyButton && (
-        <div className="flex items-center gap-2 mt-1 text-[11px] text-zinc-400 dark:text-zinc-500 select-none">
+        <div className={messageMetaClassName(isHovered)} aria-hidden={!isHovered}>
           <span>{formatMessageDateTime(message.timestamp)}</span>
-          {turnMetadata?.model && (
-            <span>{turnMetadata.model.includes('/') ? turnMetadata.model.split('/').pop() : turnMetadata.model}</span>
-          )}
+          {modelLabel && <span>{modelLabel}</span>}
           <CopyButton
             content={displayContent}
             visible={isHovered}

@@ -38,6 +38,7 @@ interface AgentTreeNodeProps {
 const ACTION_MENU_VIEWPORT_PADDING = 8;
 const ACTION_MENU_VERTICAL_GAP = 4;
 const ACTION_MENU_HEIGHT = 104;
+const AGENT_TASKS_TRANSITION_MS = 200;
 
 const AgentAvatar: React.FC<{ agent: AgentSidebarAgentNode }> = ({ agent }) => {
   if (shouldUseDefaultAgentIcon(agent)) {
@@ -77,8 +78,12 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
 }) => {
   const [menuPosition, setMenuPosition] = useState<{ right: number; top: number } | null>(null);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+  const [shouldRenderTasks, setShouldRenderTasks] = useState(agent.isExpanded);
+  const [isTaskGroupVisible, setIsTaskGroupVisible] = useState(agent.isExpanded);
+  const [isTaskGroupTransitioning, setIsTaskGroupTransitioning] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const previousExpandedRef = useRef(agent.isExpanded);
   const isMenuOpen = menuPosition !== null;
   const isMainAgent = isDefaultAgentId(agent.id);
   const agentName = getAgentDisplayName(agent);
@@ -152,6 +157,48 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
       window.removeEventListener('scroll', updateMenuPosition, true);
     };
   }, [calculateMenuPosition, closeMenu, isMenuOpen]);
+
+  useEffect(() => {
+    let animationFrame: number | undefined;
+    let transitionTimeout: number | undefined;
+    const wasExpanded = previousExpandedRef.current;
+
+    previousExpandedRef.current = agent.isExpanded;
+
+    if (wasExpanded === agent.isExpanded) {
+      return undefined;
+    }
+
+    if (agent.isExpanded) {
+      setShouldRenderTasks(true);
+      setIsTaskGroupVisible(false);
+      setIsTaskGroupTransitioning(true);
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = window.requestAnimationFrame(() => {
+          setIsTaskGroupVisible(true);
+          transitionTimeout = window.setTimeout(() => {
+            setIsTaskGroupTransitioning(false);
+          }, AGENT_TASKS_TRANSITION_MS);
+        });
+      });
+    } else {
+      setIsTaskGroupTransitioning(true);
+      setIsTaskGroupVisible(false);
+      transitionTimeout = window.setTimeout(() => {
+        setShouldRenderTasks(false);
+        setIsTaskGroupTransitioning(false);
+      }, AGENT_TASKS_TRANSITION_MS);
+    }
+
+    return () => {
+      if (animationFrame !== undefined) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+      if (transitionTimeout !== undefined) {
+        window.clearTimeout(transitionTimeout);
+      }
+    };
+  }, [agent.isExpanded]);
 
   const handleEditAgent = (event: React.MouseEvent) => {
     event.stopPropagation();
@@ -297,70 +344,84 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
         )}
       </div>
 
-      {agent.isExpanded && (
-        <div className="space-y-0.5" role="group">
-          {agent.hasLoadError && agent.tasks.length === 0 && (
-            <button
-              type="button"
-              onClick={() => onRetryLoadTasks(agent.id)}
-              className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center rounded-md pl-[38px] pr-2.5 text-left text-[13px] text-red-500 transition-colors hover:bg-red-500/10"
-            >
-              {i18nService.t('myAgentSidebarLoadFailed')}
-            </button>
-          )}
+      {shouldRenderTasks && (
+        <div
+          className={`grid w-full min-w-0 max-w-full transition-all duration-200 ease-out motion-reduce:transition-none ${
+            isTaskGroupVisible ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+          }`}
+        >
+          <div
+            className={`min-h-0 min-w-0 max-w-full ${
+              isTaskGroupVisible && !isTaskGroupTransitioning ? 'overflow-visible' : 'overflow-hidden'
+            } ${isTaskGroupVisible ? '' : 'pointer-events-none'}`}
+            role="group"
+            aria-hidden={!agent.isExpanded}
+          >
+            <div className="min-w-0 max-w-full space-y-0.5">
+              {agent.hasLoadError && agent.tasks.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => onRetryLoadTasks(agent.id)}
+                  className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center rounded-md pl-[38px] pr-2.5 text-left text-[13px] text-red-500 transition-colors hover:bg-red-500/10"
+                >
+                  {i18nService.t('myAgentSidebarLoadFailed')}
+                </button>
+              )}
 
-          {agent.isLoadingTasks && agent.tasks.length === 0 && (
-            <div className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center pl-[38px] pr-2.5 text-[13px] text-secondary">
-              {i18nService.t('loading')}
+              {agent.isLoadingTasks && agent.tasks.length === 0 && (
+                <div className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center pl-[38px] pr-2.5 text-[13px] text-secondary">
+                  {i18nService.t('loading')}
+                </div>
+              )}
+
+              {!agent.isLoadingTasks && !agent.hasLoadError && agent.tasks.length === 0 && (
+                <div className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center pl-[38px] pr-2.5 text-[13px] text-foreground opacity-[0.28]">
+                  {i18nService.t('myAgentSidebarNoTasks')}
+                </div>
+              )}
+
+              {agent.tasks.map((task) => (
+                <AgentTaskRow
+                  key={task.id}
+                  task={task}
+                  isBatchMode={isBatchMode}
+                  isSelected={selectedIds.has(task.id)}
+                  showBatchOption={showBatchOption}
+                  onSelect={() => onSelectTask(task)}
+                  onDelete={() => onDeleteTask(task)}
+                  onTogglePin={(pinned) => onToggleTaskPin(task, pinned)}
+                  onRename={(title) => onRenameTask(task, title)}
+                  onToggleSelection={() => onToggleSelection(task.id)}
+                  onEnterBatchMode={() => onEnterBatchMode(task)}
+                />
+              ))}
+
+              {agent.hasLoadError && agent.tasks.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onRetryLoadTasks(agent.id)}
+                  className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center rounded-md pl-[38px] pr-2.5 text-left text-[13px] text-red-500 transition-colors hover:bg-red-500/10"
+                >
+                  {i18nService.t('myAgentSidebarLoadFailed')}
+                </button>
+              )}
+
+              {agent.canExpandTasks && (
+                <ExpandAgentTasksRow
+                  isLoading={agent.isLoadingTasks}
+                  label={i18nService.t('myAgentSidebarExpandMore')}
+                  onClick={() => onLoadMoreTasks(agent.id)}
+                />
+              )}
+              {agent.canCollapseTasks && (
+                <ExpandAgentTasksRow
+                  isLoading={false}
+                  label={i18nService.t('myAgentSidebarCollapse')}
+                  onClick={() => onCollapseTasks(agent.id)}
+                />
+              )}
             </div>
-          )}
-
-          {!agent.isLoadingTasks && !agent.hasLoadError && agent.tasks.length === 0 && (
-            <div className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center pl-[38px] pr-2.5 text-[13px] text-foreground opacity-[0.28]">
-              {i18nService.t('myAgentSidebarNoTasks')}
-            </div>
-          )}
-
-          {agent.tasks.map((task) => (
-            <AgentTaskRow
-              key={task.id}
-              task={task}
-              isBatchMode={isBatchMode}
-              isSelected={selectedIds.has(task.id)}
-              showBatchOption={showBatchOption}
-              onSelect={() => onSelectTask(task)}
-              onDelete={() => onDeleteTask(task)}
-              onTogglePin={(pinned) => onToggleTaskPin(task, pinned)}
-              onRename={(title) => onRenameTask(task, title)}
-              onToggleSelection={() => onToggleSelection(task.id)}
-              onEnterBatchMode={() => onEnterBatchMode(task)}
-            />
-          ))}
-
-          {agent.hasLoadError && agent.tasks.length > 0 && (
-            <button
-              type="button"
-              onClick={() => onRetryLoadTasks(agent.id)}
-              className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center rounded-md pl-[38px] pr-2.5 text-left text-[13px] text-red-500 transition-colors hover:bg-red-500/10"
-            >
-              {i18nService.t('myAgentSidebarLoadFailed')}
-            </button>
-          )}
-
-          {agent.canExpandTasks && (
-            <ExpandAgentTasksRow
-              isLoading={agent.isLoadingTasks}
-              label={i18nService.t('myAgentSidebarExpandMore')}
-              onClick={() => onLoadMoreTasks(agent.id)}
-            />
-          )}
-          {agent.canCollapseTasks && (
-            <ExpandAgentTasksRow
-              isLoading={false}
-              label={i18nService.t('myAgentSidebarCollapse')}
-              onClick={() => onCollapseTasks(agent.id)}
-            />
-          )}
+          </div>
         </div>
       )}
     </div>

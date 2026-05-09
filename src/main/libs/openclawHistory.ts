@@ -8,6 +8,7 @@ type GatewayHistoryRole = 'user' | 'assistant' | 'system';
 export interface GatewayHistoryEntry {
   role: GatewayHistoryRole;
   text: string;
+  timestamp?: number;
   usage?: { input?: number; output?: number; cacheRead?: number; totalTokens?: number };
   model?: string;
 }
@@ -56,6 +57,35 @@ const collectTextChunks = (value: unknown): string[] => {
   }
 
   return chunks;
+};
+
+const parseGatewayTimestamp = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric;
+  }
+
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+const extractGatewayTimestamp = (message: Record<string, unknown>): number | undefined => {
+  return parseGatewayTimestamp(message.timestamp)
+    ?? parseGatewayTimestamp(message.createdAt)
+    ?? parseGatewayTimestamp(message.created_at)
+    ?? parseGatewayTimestamp(message.time);
 };
 
 export const extractGatewayMessageText = (message: unknown): string => {
@@ -151,10 +181,12 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
   const reminderSystemMessage = role === 'user'
     ? buildScheduledReminderSystemMessage(text)
     : null;
+  const timestamp = extractGatewayTimestamp(message);
   if (reminderSystemMessage) {
     return {
       role: 'system',
       text: reminderSystemMessage,
+      ...(timestamp != null && { timestamp }),
     };
   }
 
@@ -188,6 +220,7 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
   return {
     role,
     text,
+    ...(timestamp != null && { timestamp }),
     ...(usage && { usage }),
     ...(model && { model }),
   };
