@@ -8,6 +8,8 @@ interface AgentSummary {
   model: string;
   workingDirectory: string;
   enabled: boolean;
+  pinned: boolean;
+  pinOrder?: number | null;
   isDefault: boolean;
   source: 'custom' | 'preset';
   skillIds: string[];

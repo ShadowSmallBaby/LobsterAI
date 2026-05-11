@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+
 import {
   buildScheduledReminderSystemMessage,
   extractGatewayHistoryEntries,
@@ -7,8 +8,10 @@ import {
   isHeartbeatAckText,
   isHeartbeatPromptText,
   isPreCompactionMemoryFlushPromptText,
-  isSilentTokenPrefixText,
-  isSilentTokenText,
+  isSilentReplyPrefixText,
+  isSilentReplyText,
+  stripTrailingSilentReplyTail,
+  stripTrailingSilentReplyToken,
 } from './openclawHistory';
 
 describe('openclawHistory', () => {
@@ -51,6 +54,20 @@ describe('openclawHistory', () => {
     ).toEqual({
       role: 'assistant',
       text: 'final answer',
+    });
+  });
+
+  test('keeps gateway message timestamps when present', () => {
+    expect(
+      extractGatewayHistoryEntry({
+        role: 'user',
+        content: 'hello',
+        createdAt: '2026-05-09T10:20:30.000Z',
+      })
+    ).toEqual({
+      role: 'user',
+      text: 'hello',
+      timestamp: Date.parse('2026-05-09T10:20:30.000Z'),
     });
   });
 
@@ -180,14 +197,165 @@ If nothing needs attention, reply HEARTBEAT_OK.`)
   });
 
   test('silent and memory flush detectors are narrow', () => {
-    expect(isSilentTokenText('NO_REPLY')).toBe(true);
-    expect(isSilentTokenPrefixText('NO_REP')).toBe(true);
-    expect(isSilentTokenPrefixText('NO_REPLY')).toBe(false);
-    expect(isSilentTokenPrefixText('NO_REPLY after saving memory')).toBe(false);
-    expect(isSilentTokenText('NO_REPLY after saving memory')).toBe(false);
+    expect(isSilentReplyText('NO_REPLY')).toBe(true);
+    expect(isSilentReplyPrefixText('NO_REP')).toBe(true);
+    expect(isSilentReplyPrefixText('NO_REPLY')).toBe(false);
+    expect(isSilentReplyPrefixText('NO_REPLY after saving memory')).toBe(false);
+    expect(isSilentReplyText('NO_REPLY after saving memory')).toBe(false);
     expect(isPreCompactionMemoryFlushPromptText(`Pre-compaction memory flush.
 Store durable memories only in memory/2026-05-09.md.
 If nothing to store, reply with NO_REPLY.`)).toBe(true);
     expect(isPreCompactionMemoryFlushPromptText('Please write a memory summary.')).toBe(false);
+  });
+
+  test('isSilentReplyText matches exact NO_REPLY token only', () => {
+    expect(isSilentReplyText('NO_REPLY')).toBe(true);
+    expect(isSilentReplyText('  NO_REPLY  ')).toBe(true);
+    expect(isSilentReplyText('no_reply')).toBe(true);
+    expect(isSilentReplyText('This is a message ending with NO_REPLY')).toBe(false);
+    expect(isSilentReplyText('NO_REPLY: explanation')).toBe(false);
+    expect(isSilentReplyText('NO')).toBe(false);
+    expect(isSilentReplyText('')).toBe(false);
+  });
+
+  test('shouldSuppressHeartbeatText suppresses NO_REPLY for assistant and system', () => {
+    // Imported at module level, test via extractGatewayHistoryEntry
+    const entry = extractGatewayHistoryEntry({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'NO_REPLY' }],
+    });
+    expect(entry).toBeNull();
+  });
+
+  test('shouldSuppressHeartbeatText does not suppress user NO_REPLY', () => {
+    const entry = extractGatewayHistoryEntry({
+      role: 'user',
+      content: 'NO_REPLY',
+    });
+    expect(entry).toEqual({ role: 'user', text: 'NO_REPLY' });
+  });
+
+  test('isSilentReplyPrefixText matches streaming prefix fragments', () => {
+    expect(isSilentReplyPrefixText('NO')).toBe(true);
+    expect(isSilentReplyPrefixText('NO_')).toBe(true);
+    expect(isSilentReplyPrefixText('NO_R')).toBe(true);
+    expect(isSilentReplyPrefixText('NO_RE')).toBe(true);
+    expect(isSilentReplyPrefixText('NO_REP')).toBe(true);
+    expect(isSilentReplyPrefixText('NO_REPL')).toBe(true);
+  });
+
+  test('isSilentReplyPrefixText rejects non-prefix text', () => {
+    expect(isSilentReplyPrefixText('')).toBe(false);
+    expect(isSilentReplyPrefixText('N')).toBe(false);
+    expect(isSilentReplyPrefixText('No')).toBe(false);
+    expect(isSilentReplyPrefixText('NO,')).toBe(false);
+    expect(isSilentReplyPrefixText('NOT')).toBe(false);
+    expect(isSilentReplyPrefixText('hello')).toBe(false);
+  });
+
+  describe('stripTrailingSilentReplyToken', () => {
+    test('strips trailing NO_REPLY after newline', () => {
+      expect(stripTrailingSilentReplyToken('Content here.\n\nNO_REPLY')).toBe('Content here.');
+    });
+
+    test('strips trailing NO_REPLY with extra whitespace', () => {
+      expect(stripTrailingSilentReplyToken('Content here.\n  NO_REPLY  ')).toBe('Content here.');
+    });
+
+    test('strips case-insensitively', () => {
+      expect(stripTrailingSilentReplyToken('Content\n\nno_reply')).toBe('Content');
+    });
+
+    test('does not strip NO_REPLY in the middle of text', () => {
+      const input = 'The token NO_REPLY is used.\nMore text.';
+      expect(stripTrailingSilentReplyToken(input)).toBe(input);
+    });
+
+    test('does not strip when NO_REPLY is the entire message', () => {
+      expect(stripTrailingSilentReplyToken('NO_REPLY')).toBe('NO_REPLY');
+    });
+
+    test('returns empty string when stripping leaves nothing', () => {
+      expect(stripTrailingSilentReplyToken('\nNO_REPLY')).toBe('');
+    });
+
+    test('does not modify normal text', () => {
+      const input = 'Normal response without the token.';
+      expect(stripTrailingSilentReplyToken(input)).toBe(input);
+    });
+  });
+
+  describe('stripTrailingSilentReplyTail', () => {
+    test('strips complete trailing NO_REPLY', () => {
+      expect(stripTrailingSilentReplyTail('Content\n\nNO_REPLY')).toBe('Content');
+    });
+
+    test('strips partial prefix NO', () => {
+      expect(stripTrailingSilentReplyTail('Content\nNO')).toBe('Content');
+    });
+
+    test('strips partial prefix NO_', () => {
+      expect(stripTrailingSilentReplyTail('Content\nNO_')).toBe('Content');
+    });
+
+    test('strips partial prefix NO_R', () => {
+      expect(stripTrailingSilentReplyTail('Content\nNO_R')).toBe('Content');
+    });
+
+    test('strips partial prefix NO_RE', () => {
+      expect(stripTrailingSilentReplyTail('Content\nNO_RE')).toBe('Content');
+    });
+
+    test('strips partial prefix NO_REP', () => {
+      expect(stripTrailingSilentReplyTail('Content\nNO_REP')).toBe('Content');
+    });
+
+    test('strips partial prefix NO_REPL', () => {
+      expect(stripTrailingSilentReplyTail('Content\nNO_REPL')).toBe('Content');
+    });
+
+    test('does not strip NO without preceding newline', () => {
+      expect(stripTrailingSilentReplyTail('say NO')).toBe('say NO');
+    });
+
+    test('does not strip non-matching tail', () => {
+      expect(stripTrailingSilentReplyTail('Content\nNOT')).toBe('Content\nNOT');
+      expect(stripTrailingSilentReplyTail('Content\nNORMAL')).toBe('Content\nNORMAL');
+    });
+
+    test('does not modify normal text', () => {
+      const input = 'Normal response.';
+      expect(stripTrailingSilentReplyTail(input)).toBe(input);
+    });
+  });
+
+  test('extractGatewayHistoryEntry strips trailing NO_REPLY from assistant', () => {
+    const entry = extractGatewayHistoryEntry({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Background notifications handled.\n\nNO_REPLY' }],
+    });
+    expect(entry).toEqual({
+      role: 'assistant',
+      text: 'Background notifications handled.',
+    });
+  });
+
+  test('extractGatewayHistoryEntry does not strip trailing NO_REPLY from user', () => {
+    const entry = extractGatewayHistoryEntry({
+      role: 'user',
+      content: 'Some user text\n\nNO_REPLY',
+    });
+    expect(entry).toEqual({
+      role: 'user',
+      text: 'Some user text\n\nNO_REPLY',
+    });
+  });
+
+  test('extractGatewayHistoryEntry returns null when stripping leaves empty text', () => {
+    const entry = extractGatewayHistoryEntry({
+      role: 'assistant',
+      content: [{ type: 'text', text: '\nNO_REPLY' }],
+    });
+    expect(entry).toBeNull();
   });
 });

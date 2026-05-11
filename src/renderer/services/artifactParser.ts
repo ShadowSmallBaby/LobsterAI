@@ -117,6 +117,10 @@ export function parseCodeBlockArtifacts(
 
 const FILE_LINK_RE = /\[([^\]]+)\]\(file:\/\/([^)]+)\)/g;
 
+export function stripFileLinksFromText(text: string): string {
+  return text.replace(/\[([^\]]+)\]\(file:\/\/([^)]+)\)/g, '');
+}
+
 const BARE_FILE_PATH_RE = /(?:^|[\s"'`(])(\/?(?:[^\s"'`()\[\]]+\/)*[^\s"'`()\[\]]+\.(?:docx|xlsx|pptx|pdf|md|txt|log|csv))(?:[\s"'`)]|$)/gm;
 
 export function parseFilePathsFromText(

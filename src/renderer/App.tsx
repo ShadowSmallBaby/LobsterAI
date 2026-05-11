@@ -10,7 +10,6 @@ import {
   AppUpdateStatus,
 } from '../shared/appUpdate/constants';
 import { OpenClawProviderId, ProviderName, ProviderRegistry } from '../shared/providers';
-import AgentsView from './components/agent/AgentsView';
 import { CoworkView } from './components/cowork';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
@@ -63,7 +62,7 @@ const INIT_STEP_TIMEOUT_MS_DEFAULT = 16_000;
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'mcp' | 'agents'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'mcp'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -321,10 +320,6 @@ const App: React.FC = () => {
 
   const handleShowMcp = useCallback(() => {
     setMainView('mcp');
-  }, []);
-
-  const handleShowAgents = useCallback(() => {
-    setMainView('agents');
   }, []);
 
   const handleToggleSidebar = useCallback(() => {
@@ -600,6 +595,24 @@ const App: React.FC = () => {
     return () => window.removeEventListener('app:showToast', handler);
   }, [showToast]);
 
+  // Listen for ask-ai events: close settings, navigate to cowork, pre-fill input
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail;
+      setShowSettings(false);
+      setMainView('cowork');
+      window.setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent('cowork:focus-input', {
+            detail: { text },
+          }),
+        );
+      }, 50);
+    };
+    window.addEventListener('app:ask-ai', handler);
+    return () => window.removeEventListener('app:ask-ai', handler);
+  }, []);
+
   // 监听托盘菜单打开设置的 IPC 事件
   useEffect(() => {
     const unsubscribe = window.electron.ipcRenderer.on('app:openSettings', () => {
@@ -776,14 +789,13 @@ const App: React.FC = () => {
           onShowCowork={handleShowCowork}
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowMcp={handleShowMcp}
-          onShowAgents={handleShowAgents}
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
           updateBadge={!isSidebarCollapsed ? updateBadge : null}
           hideLogin={enterpriseConfig?.ui?.login === 'hide'}
         />
-        <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
+        <div className={`flex-1 min-w-0 py-1.5 pr-1.5 transition-[padding] duration-200 ease-out ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
           <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
             <EngineStartupOverlay />
             {mainView === 'skills' ? (
@@ -804,13 +816,6 @@ const App: React.FC = () => {
               />
             ) : mainView === 'mcp' ? (
               <McpView
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
-              />
-            ) : mainView === 'agents' ? (
-              <AgentsView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}

@@ -11,6 +11,8 @@ export interface Agent {
   icon: string;
   skillIds: string[];
   enabled: boolean;
+  pinned: boolean;
+  pinOrder?: number | null;
   isDefault: boolean;
   source: AgentSource;
   presetId: string;
@@ -28,7 +30,7 @@ export interface PresetAgent {
   systemPrompt: string;
   systemPromptEn: string;
   skillIds: string[];
-  installed: boolean;
+  installed?: boolean;
 }
 
 export interface CreateAgentRequest {
@@ -55,4 +57,5 @@ export interface UpdateAgentRequest {
   icon?: string;
   skillIds?: string[];
   enabled?: boolean;
+  pinned?: boolean;
 }

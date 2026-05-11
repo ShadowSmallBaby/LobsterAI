@@ -1,10 +1,11 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
+import { normalizeFilePathForDedup } from '../../services/artifactParser';
 import type { Artifact } from '../../types/artifact';
 import type { RootState } from '../index';
 
 const DEFAULT_PANEL_WIDTH = 560;
-const MIN_PANEL_WIDTH = 420;
+const MIN_PANEL_WIDTH = 180;
 const MAX_PANEL_WIDTH = 1000;
 
 export type ArtifactPanelView = 'files' | 'preview';
@@ -48,6 +49,20 @@ const artifactSlice = createSlice({
           state.artifactsBySession[sessionId][existing] = artifact;
         }
       } else {
+        // Deduplicate by filePath: if another artifact with same filePath already exists, update it
+        if (artifact.filePath) {
+          const normalizedPath = normalizeFilePathForDedup(artifact.filePath);
+          const dupIndex = state.artifactsBySession[sessionId].findIndex(
+            a => a.filePath && normalizeFilePathForDedup(a.filePath) === normalizedPath
+          );
+          if (dupIndex >= 0) {
+            const old = state.artifactsBySession[sessionId][dupIndex];
+            if (artifact.content || !old.content) {
+              state.artifactsBySession[sessionId][dupIndex] = artifact;
+            }
+            return;
+          }
+        }
         state.artifactsBySession[sessionId].push(artifact);
       }
     },

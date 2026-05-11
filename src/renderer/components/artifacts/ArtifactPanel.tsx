@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 import {
+  addArtifact,
   closePanel,
   MAX_PANEL_WIDTH,
   MIN_PANEL_WIDTH,
@@ -16,7 +17,9 @@ import {
 } from '@/store/slices/artifactSlice';
 import type { ArtifactType } from '@/types/artifact';
 import type { Artifact } from '@/types/artifact';
+import { PREVIEWABLE_ARTIFACT_TYPES } from '@/types/artifact';
 
+import CopyIcon from '../icons/CopyIcon';
 import ArtifactRenderer from './ArtifactRenderer';
 import FileDirectoryView from './FileDirectoryView';
 import CodeRenderer from './renderers/CodeRenderer';
@@ -44,57 +47,57 @@ function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-const TYPE_LABELS: Record<ArtifactType, string> = {
-  html: 'Html',
-  svg: 'Svg',
-  image: 'Image',
-  mermaid: 'Mermaid',
-  code: 'Code',
-  markdown: 'Markdown',
-  text: 'Text',
-  document: 'Document',
-};
-
-const TYPE_ICONS: Record<ArtifactType, string> = {
-  html: '<>',
-  svg: '🎨',
-  image: '🖼',
-  mermaid: '📊',
-  code: '<>',
-  markdown: '📝',
-  text: '📄',
-  document: '📑',
-};
-
 interface ArtifactPanelProps {
   artifacts: Artifact[];
+  minPanelWidth?: number;
+  maxPanelWidth?: number;
 }
 
-const ArtifactPanel: React.FC<ArtifactPanelProps> = ({ artifacts }) => {
+const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
+  artifacts,
+  minPanelWidth = MIN_PANEL_WIDTH,
+  maxPanelWidth = MAX_PANEL_WIDTH,
+}) => {
   const dispatch = useDispatch();
   const selectedArtifact = useSelector(selectSelectedArtifact);
   const panelWidth = useSelector(selectPanelWidth);
   const activeTab = useSelector(selectActiveTab);
   const selectedArtifactId = useSelector((state: RootState) => state.artifact.selectedArtifactId);
+  const [showFileList, setShowFileList] = useState(false);
+  const fileListRef = useRef<HTMLDivElement>(null);
+  const toggleBtnRef = useRef<HTMLButtonElement>(null);
+
+  const previewableArtifacts = artifacts.filter(a => PREVIEWABLE_ARTIFACT_TYPES.has(a.type));
 
   const isResizing = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
+  const constrainedMaxPanelWidth = Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, maxPanelWidth));
+  const constrainedMinPanelWidth = Math.min(
+    constrainedMaxPanelWidth,
+    Math.max(MIN_PANEL_WIDTH, minPanelWidth),
+  );
+  const constrainedPanelWidth = Math.max(constrainedMinPanelWidth, Math.min(constrainedMaxPanelWidth, panelWidth));
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isResizing.current = true;
     startX.current = e.clientX;
-    startWidth.current = panelWidth;
+    startWidth.current = constrainedPanelWidth;
     document.body.classList.add('select-none');
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!isResizing.current) return;
-      const delta = startX.current - moveEvent.clientX;
-      const maxAvailable = Math.max(MIN_PANEL_WIDTH, window.innerWidth - 480 - 4);
-      const clampedMax = Math.min(MAX_PANEL_WIDTH, maxAvailable);
-      const newWidth = Math.max(MIN_PANEL_WIDTH, Math.min(clampedMax, startWidth.current + delta));
-      dispatch(setPanelWidth(newWidth));
+      const nextWidth = startWidth.current + startX.current - moveEvent.clientX;
+      if (nextWidth < constrainedMinPanelWidth) {
+        isResizing.current = false;
+        document.body.classList.remove('select-none');
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        dispatch(closePanel());
+        return;
+      }
+      dispatch(setPanelWidth(Math.min(constrainedMaxPanelWidth, nextWidth)));
     };
 
     const handleMouseUp = () => {
@@ -106,7 +109,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({ artifacts }) => {
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [panelWidth, dispatch]);
+  }, [constrainedMaxPanelWidth, constrainedMinPanelWidth, constrainedPanelWidth, dispatch]);
 
   useEffect(() => {
     return () => {
@@ -114,8 +117,25 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({ artifacts }) => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!showFileList) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        fileListRef.current && !fileListRef.current.contains(e.target as Node) &&
+        toggleBtnRef.current && !toggleBtnRef.current.contains(e.target as Node)
+      ) {
+        setShowFileList(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showFileList]);
+
   const handleClose = useCallback(() => dispatch(closePanel()), [dispatch]);
-  const handleSelectArtifact = useCallback((id: string) => dispatch(selectArtifact(id)), [dispatch]);
+  const handleSelectArtifact = useCallback((id: string) => {
+    dispatch(selectArtifact(id));
+    setShowFileList(false);
+  }, [dispatch]);
 
   const handleCopy = useCallback(async () => {
     if (selectedArtifact) {
@@ -165,6 +185,32 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({ artifacts }) => {
     }
   }, [selectedArtifact]);
 
+  const handleRefresh = useCallback(async () => {
+    if (!selectedArtifact?.filePath) return;
+    try {
+      const result = await window.electron.dialog.readFileAsDataUrl(selectedArtifact.filePath);
+      if (result?.success && result.dataUrl) {
+        const isTextType = selectedArtifact.type !== 'image' && selectedArtifact.type !== 'document';
+        let content = result.dataUrl;
+        if (isTextType) {
+          try {
+            const base64 = result.dataUrl.split(',')[1] || '';
+            const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+            content = new TextDecoder('utf-8').decode(bytes);
+          } catch {
+            content = result.dataUrl;
+          }
+        }
+        dispatch(addArtifact({
+          sessionId: selectedArtifact.sessionId,
+          artifact: { ...selectedArtifact, content },
+        }));
+      }
+    } catch {
+      // File unreadable or missing
+    }
+  }, [selectedArtifact, dispatch]);
+
   return (
     <>
       {/* Drag handle */}
@@ -173,44 +219,51 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({ artifacts }) => {
         onMouseDown={handleResizeStart}
       />
       <aside
-        style={{ width: panelWidth, maxWidth: 'calc(100vw - 480px - 4px)' }}
-        className="shrink border-l border-border bg-background flex h-full overflow-hidden"
+        style={{ width: constrainedPanelWidth, maxWidth: constrainedMaxPanelWidth }}
+        className="shrink border-l border-border bg-background flex flex-col h-full overflow-hidden relative"
       >
-        {/* Left: File list */}
-        <div className={`${selectedArtifact ? 'w-[180px] shrink-0 border-r border-border' : 'flex-1'} flex flex-col h-full overflow-hidden`}>
-          <div className="h-10 flex items-center px-3 border-b border-border shrink-0">
-            <span className="text-xs font-medium text-secondary">{t('artifactFiles')}</span>
-            <span className="flex-1" />
-            <button
-              onClick={handleClose}
-              className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
-            >
-              <CloseIcon />
-            </button>
+        {/* Floating file list overlay */}
+        {showFileList && (
+          <div
+            ref={fileListRef}
+            className="absolute top-10 right-2 z-20 w-[240px] max-h-[60%] bg-background border border-border rounded-lg shadow-lg flex flex-col overflow-hidden"
+          >
+            <div className="h-9 flex items-center px-3 border-b border-border shrink-0">
+              <span className="text-xs font-medium text-secondary">{t('artifactFileList')}</span>
+            </div>
+            <FileDirectoryView
+              artifacts={previewableArtifacts}
+              selectedId={selectedArtifactId}
+              onSelect={handleSelectArtifact}
+              compact
+            />
           </div>
-          <FileDirectoryView
-            artifacts={artifacts}
-            selectedId={selectedArtifactId}
-            onSelect={handleSelectArtifact}
-          />
-        </div>
+        )}
 
-        {/* Right: Preview area (only shown when an artifact is selected) */}
-        {selectedArtifact && (
+        {selectedArtifact ? (
           <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-            {/* Header: filename + type + actions */}
+            {/* Header: file list toggle + filename + type + actions */}
             <div className="h-10 flex items-center gap-2 px-3 border-b border-border shrink-0">
-              <span className="text-xs text-muted">{TYPE_ICONS[selectedArtifact.type] || '<>'}</span>
               <span className="text-sm font-medium truncate">{selectedArtifact.fileName || selectedArtifact.title}</span>
-              <span className="text-xs text-muted">{TYPE_LABELS[selectedArtifact.type] || selectedArtifact.type}</span>
               <span className="flex-1" />
-              <button
-                onClick={handleCopy}
-                className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
-                title={t('artifactCopyCode')}
-              >
-                <CopyIcon />
-              </button>
+              {selectedArtifact.filePath && (
+                <button
+                  onClick={handleRefresh}
+                  className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
+                  title={t('artifactRefresh')}
+                >
+                  <RefreshIcon />
+                </button>
+              )}
+              {selectedArtifact.type !== 'document' && (
+                <button
+                  onClick={handleCopy}
+                  className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
+                  title={t('artifactCopyCode')}
+                >
+                  <CopyIcon className="h-3.5 w-3.5" />
+                </button>
+              )}
               {BROWSER_OPENABLE_TYPES.has(selectedArtifact.type) && (
                 <button
                   onClick={handleOpenInBrowser}
@@ -239,10 +292,16 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({ artifacts }) => {
                 </button>
               )}
               <button
-                onClick={() => dispatch(selectArtifact(null))}
-                className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
+                ref={toggleBtnRef}
+                onClick={() => setShowFileList(v => !v)}
+                className={`p-1 rounded transition-colors ${
+                  showFileList
+                    ? 'text-primary bg-primary/10'
+                    : 'text-secondary hover:text-foreground hover:bg-surface'
+                }`}
+                title={t('artifactFileList')}
               >
-                <CloseIcon />
+                <FileListIcon />
               </button>
             </div>
 
@@ -279,18 +338,30 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({ artifacts }) => {
               )}
             </div>
           </div>
+        ) : (
+          /* No artifact selected: show full-width file list */
+          <div className="flex-1 flex flex-col h-full overflow-hidden">
+            <div className="h-10 flex items-center px-3 border-b border-border shrink-0">
+              <span className="text-xs font-medium text-secondary">{t('artifactFiles')}</span>
+              <span className="flex-1" />
+              <button
+                onClick={handleClose}
+                className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <FileDirectoryView
+              artifacts={previewableArtifacts}
+              selectedId={selectedArtifactId}
+              onSelect={handleSelectArtifact}
+            />
+          </div>
         )}
       </aside>
     </>
   );
 };
-
-const CopyIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
-    <path d="M10.5 5.5V3.5a1.5 1.5 0 00-1.5-1.5H3.5A1.5 1.5 0 002 3.5V9a1.5 1.5 0 001.5 1.5h2" />
-  </svg>
-);
 
 const FolderIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -317,6 +388,22 @@ const OpenExternalIcon = () => (
 const CloseIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
     <path d="M4 4l8 8M12 4l-8 8" />
+  </svg>
+);
+
+const FileListIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4.5 2.881c0-.644.522-1.167 1.167-1.167h2.552c.323 0 .635.117.878.33l.58.507c.243.213.555.33.877.33h3.351c.736 0 1.333.597 1.333 1.333v5.945c0 .49-.398.889-.889.889" />
+    <path d="M1.143 6.476c0-.736.597-1.333 1.333-1.333h2.314c.323 0 .635.117.878.33l.58.507c.242.213.554.33.877.33h3.351c.736 0 1.333.597 1.333 1.334v4.833c0 .736-.597 1.333-1.333 1.333H2.476c-.736 0-1.333-.597-1.333-1.333V6.476z" />
+  </svg>
+);
+
+const RefreshIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M13.5 8a5.5 5.5 0 01-9.55 3.75" />
+    <path d="M2.5 8a5.5 5.5 0 019.55-3.75" />
+    <path d="M12.05 1.25v3h-3" />
+    <path d="M3.95 14.75v-3h3" />
   </svg>
 );
 

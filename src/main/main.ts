@@ -1,5 +1,5 @@
 import type { WebContents } from 'electron';
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, protocol, screen, session, shell } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -8,6 +8,7 @@ import type { OpenClawSessionPatch } from '../common/openclawSession';
 import { buildSessionTitleFromInput } from '../common/sessionTitle';
 import { buildScheduledTaskEnginePrompt } from '../scheduledTask/enginePrompt';
 import { migrateScheduledTaskRunsToOpenclaw, migrateScheduledTasksToOpenclaw } from '../scheduledTask/migrate';
+import { AgentIpcChannel } from '../shared/agent/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { COWORK_MESSAGE_PAGE_SIZE, COWORK_SESSION_PAGE_SIZE } from '../shared/cowork/constants';
 import { PlatformRegistry } from '../shared/platform';
@@ -100,6 +101,13 @@ import { getSkillServiceManager } from './skillServices';
 import { SqliteStore } from './sqliteStore';
 import { StartupProfiler } from './startupProfiler';
 import { createTray, destroyTray, updateTrayMenu } from './trayManager';
+import {
+  AppWindowStoreKey,
+  MIN_APP_WINDOW_HEIGHT,
+  MIN_APP_WINDOW_WIDTH,
+  resolveInitialAppWindowState,
+  type WindowRectangle,
+} from './windowState';
 
 const gwDiagTs = (): string => {
   const d = new Date();
@@ -1884,7 +1892,9 @@ let isQuitting = false;
 // 存储活跃的流式请求控制器
 const activeStreamControllers = new Map<string, AbortController>();
 let lastReloadAt = 0;
+let windowStateSaveTimer: ReturnType<typeof setTimeout> | null = null;
 const MIN_RELOAD_INTERVAL_MS = 5000;
+const WINDOW_STATE_SAVE_DEBOUNCE_MS = 300;
 type AppConfigSettings = {
   theme?: string;
   language?: string;
@@ -1971,6 +1981,45 @@ const emitWindowState = () => {
     isFullscreen: mainWindow.isFullScreen(),
     isFocused: mainWindow.isFocused(),
   });
+};
+
+const getDisplayWorkAreas = (): WindowRectangle[] => {
+  return screen.getAllDisplays().map((display) => display.workArea);
+};
+
+const getCurrentAppWindowState = () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+
+  const bounds = mainWindow.isFullScreen()
+    ? mainWindow.getNormalBounds()
+    : mainWindow.isMaximized()
+      ? mainWindow.getNormalBounds()
+      : mainWindow.getBounds();
+
+  return {
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    isMaximized: mainWindow.isMaximized(),
+  };
+};
+
+const persistAppWindowState = () => {
+  const state = getCurrentAppWindowState();
+  if (!state) return;
+  getStore().set(AppWindowStoreKey.State, state);
+};
+
+const schedulePersistAppWindowState = () => {
+  if (windowStateSaveTimer) {
+    clearTimeout(windowStateSaveTimer);
+  }
+
+  windowStateSaveTimer = setTimeout(() => {
+    windowStateSaveTimer = null;
+    persistAppWindowState();
+  }, WINDOW_STATE_SAVE_DEBOUNCE_MS);
 };
 
 const showSystemMenu = (position?: { x?: number; y?: number }) => {
@@ -3108,8 +3157,8 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:session:pin', async (_event, options: { sessionId: string; pinned: boolean }) => {
     try {
       const coworkStoreInstance = getCoworkStore();
-      coworkStoreInstance.setSessionPinned(options.sessionId, options.pinned);
-      return { success: true };
+      const pinOrder = coworkStoreInstance.setSessionPinned(options.sessionId, options.pinned);
+      return { success: true, pinOrder };
     } catch (error) {
       return {
         success: false,
@@ -3218,7 +3267,7 @@ if (!gotTheLock) {
 
   // ========== Agent IPC Handlers ==========
 
-  ipcMain.handle('agents:list', async () => {
+  ipcMain.handle(AgentIpcChannel.List, async () => {
     try {
       const agents = getAgentManager().listAgents();
       return { success: true, agents };
@@ -3227,7 +3276,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('agents:get', async (_event, id: string) => {
+  ipcMain.handle(AgentIpcChannel.Get, async (_event, id: string) => {
     try {
       const agent = getAgentManager().getAgent(id);
       return { success: true, agent };
@@ -3236,10 +3285,10 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('agents:create', async (_event, request: import('./coworkStore').CreateAgentRequest) => {
+  ipcMain.handle(AgentIpcChannel.Create, async (_event, request: import('./coworkStore').CreateAgentRequest) => {
     try {
       const agent = getAgentManager().createAgent(request, resolveDefaultAgentModelRef());
-      // Sync config so workspace files (SOUL.md, IDENTITY.md) are written
+      // Sync config so workspace files (SOUL.md, IDENTITY.md, USER.md) are written
       // before OpenClaw scaffolds default templates for the new agent.
       syncOpenClawConfig({ reason: 'agent-created' }).catch((err) => {
         console.error('[OpenClaw] config sync after agent-created failed:', err);
@@ -3250,19 +3299,22 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('agents:update', async (_event, id: string, updates: import('./coworkStore').UpdateAgentRequest) => {
+  ipcMain.handle(AgentIpcChannel.Update, async (_event, id: string, updates: import('./coworkStore').UpdateAgentRequest) => {
     try {
       const agent = getAgentManager().updateAgent(id, updates);
-      syncOpenClawConfig({ reason: 'agent-updated' }).catch((err) => {
-        console.error('[OpenClaw] config sync after agent-updated failed:', err);
-      });
+      const shouldSyncOpenClawConfig = Object.keys(updates).some((key) => key !== 'pinned');
+      if (shouldSyncOpenClawConfig) {
+        syncOpenClawConfig({ reason: 'agent-updated' }).catch((err) => {
+          console.error('[OpenClaw] config sync after agent-updated failed:', err);
+        });
+      }
       return { success: true, agent };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to update agent' };
     }
   });
 
-  ipcMain.handle('agents:delete', async (_event, id: string) => {
+  ipcMain.handle(AgentIpcChannel.Delete, async (_event, id: string) => {
     try {
       const result = getAgentManager().deleteAgent(id);
 
@@ -3299,7 +3351,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('agents:presets', async () => {
+  ipcMain.handle(AgentIpcChannel.Presets, async () => {
     try {
       const presets = getAgentManager().getPresetAgents();
       return { success: true, presets };
@@ -3308,7 +3360,16 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('agents:addPreset', async (_event, presetId: string) => {
+  ipcMain.handle(AgentIpcChannel.PresetTemplates, async () => {
+    try {
+      const presets = getAgentManager().getAllPresetAgents();
+      return { success: true, presets };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get preset templates' };
+    }
+  });
+
+  ipcMain.handle(AgentIpcChannel.AddPreset, async (_event, presetId: string) => {
     try {
       const agent = getAgentManager().addPresetAgent(presetId, resolveDefaultAgentModelRef());
       syncOpenClawConfig({ reason: 'agent-preset-added' }).catch((err) => {
@@ -3542,7 +3603,7 @@ if (!gotTheLock) {
       if (patch.model !== undefined) {
         getCoworkStore().updateSession(sessionId, {
           modelOverride: patch.model ?? '',
-        });
+        }, { touchUpdatedAt: false });
       }
 
       const session = getCoworkStore().getSession(sessionId);
@@ -3696,6 +3757,9 @@ if (!gotTheLock) {
     try {
       const mainWorkspace = getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir());
       writeBootstrapFile(mainWorkspace, filename, content);
+      syncOpenClawConfig({ reason: 'bootstrap-updated' }).catch((err) => {
+        console.error('[OpenClaw] config sync after bootstrap-updated failed:', err);
+      });
       return { success: true };
     } catch (error) {
       return {
@@ -5421,9 +5485,14 @@ if (!gotTheLock) {
       return;
     }
 
+    const initialWindowState = resolveInitialAppWindowState(
+      getStore().get(AppWindowStoreKey.State),
+      getDisplayWorkAreas(),
+    );
+    const { isMaximized: shouldRestoreMaximized, ...initialWindowBounds } = initialWindowState;
+
     mainWindow = new BrowserWindow({
-      width: 1200,
-      height: 800,
+      ...initialWindowBounds,
       title: APP_NAME,
       icon: getAppIconPath(),
       ...(isMac
@@ -5504,7 +5573,10 @@ if (!gotTheLock) {
     });
 
     // 设置窗口的最小尺寸
-    mainWindow.setMinimumSize(800, 600);
+    mainWindow.setMinimumSize(MIN_APP_WINDOW_WIDTH, MIN_APP_WINDOW_HEIGHT);
+    if (shouldRestoreMaximized) {
+      mainWindow.maximize();
+    }
 
     // 设置窗口加载超时
     const loadTimeout = setTimeout(() => {
@@ -5527,6 +5599,12 @@ if (!gotTheLock) {
 
     // 处理窗口关闭
     mainWindow.on('close', (e) => {
+      if (windowStateSaveTimer) {
+        clearTimeout(windowStateSaveTimer);
+        windowStateSaveTimer = null;
+      }
+      persistAppWindowState();
+
       // In development, close should actually quit so `npm run electron:dev`
       // restarts from a clean process. In production we keep tray behavior.
       if (mainWindow && !isQuitting && !isDev) {
@@ -5586,14 +5664,24 @@ if (!gotTheLock) {
 
     // 当窗口关闭时，清除引用
     mainWindow.on('closed', () => {
+      if (windowStateSaveTimer) {
+        clearTimeout(windowStateSaveTimer);
+        windowStateSaveTimer = null;
+      }
       mainWindow = null;
     });
 
     const forwardWindowState = () => emitWindowState();
-    mainWindow.on('maximize', forwardWindowState);
-    mainWindow.on('unmaximize', forwardWindowState);
-    mainWindow.on('enter-full-screen', forwardWindowState);
-    mainWindow.on('leave-full-screen', forwardWindowState);
+    const forwardAndPersistWindowState = () => {
+      emitWindowState();
+      schedulePersistAppWindowState();
+    };
+    mainWindow.on('resize', schedulePersistAppWindowState);
+    mainWindow.on('move', schedulePersistAppWindowState);
+    mainWindow.on('maximize', forwardAndPersistWindowState);
+    mainWindow.on('unmaximize', forwardAndPersistWindowState);
+    mainWindow.on('enter-full-screen', forwardAndPersistWindowState);
+    mainWindow.on('leave-full-screen', forwardAndPersistWindowState);
     mainWindow.on('focus', forwardWindowState);
     mainWindow.on('blur', forwardWindowState);
 

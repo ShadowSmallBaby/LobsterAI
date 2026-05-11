@@ -1,5 +1,6 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AgentId } from '@shared/agent';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
 import { agentService } from '../services/agent';
@@ -10,34 +11,46 @@ import {
   selectCoworkSessions,
   selectCurrentSessionId,
 } from '../store/selectors/coworkSelectors';
+import type { CoworkSessionSummary } from '../types/cowork';
+import { getAgentDisplayNameById } from '../utils/agentDisplay';
+import MyAgentSidebarTree from './agentSidebar/MyAgentSidebarTree';
 import Modal from './common/Modal';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
-import CoworkSessionList from './cowork/CoworkSessionList';
 import ClockIcon from './icons/ClockIcon';
+import Cog6ToothIcon from './icons/Cog6ToothIcon';
 import ComposeIcon from './icons/ComposeIcon';
 import ConnectorIcon from './icons/ConnectorIcon';
 import PuzzleIcon from './icons/PuzzleIcon';
 import SearchIcon from './icons/SearchIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import TrashIcon from './icons/TrashIcon';
-import UserGroupIcon from './icons/UserGroupIcon';
 import LoginButton from './LoginButton';
 
 interface SidebarProps {
   onShowSettings: () => void;
   onShowLogin?: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'mcp' | 'agents';
+  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'mcp';
   onShowSkills: () => void;
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowMcp: () => void;
-  onShowAgents: () => void;
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   updateBadge?: React.ReactNode;
   hideLogin?: boolean;
 }
+
+const DEFAULT_SIDEBAR_WIDTH = 244;
+const MIN_SIDEBAR_WIDTH = 220;
+const MAX_SIDEBAR_WIDTH = 420;
+const SIDEBAR_COLLAPSE_TRANSITION_MS = 200;
+const normalizeAgentId = (agentId?: string | null) => agentId?.trim() || AgentId.Main;
+const sidebarNavItemClassName =
+  'w-full inline-flex h-7 items-center gap-2 rounded-md px-1.5 text-left text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
+const activeSidebarNavItemClassName =
+  `${sidebarNavItemClassName} bg-black/[0.06] hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.07]`;
+const sidebarCreateIconClassName = 'h-4 w-4 shrink-0 text-secondary/40 dark:text-secondary/45';
 
 const Sidebar: React.FC<SidebarProps> = ({
   onShowSettings,
@@ -46,7 +59,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowCowork,
   onShowScheduledTasks,
   onShowMcp,
-  onShowAgents,
   onNewChat,
   isCollapsed,
   onToggleCollapse,
@@ -54,39 +66,31 @@ const Sidebar: React.FC<SidebarProps> = ({
   hideLogin,
 }) => {
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
+  const agents = useSelector((state: RootState) => state.agent.agents);
   const sessions = useSelector(selectCoworkSessions);
-  const hasMoreSessions = useSelector((state: RootState) => state.cowork.hasMoreSessions);
-  const filteredSessions = sessions.filter(s => !s.agentId || s.agentId === currentAgentId);
   const currentSessionId = useSelector(selectCurrentSessionId);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
+  const [batchAgentId, setBatchAgentId] = useState<string | null>(null);
+  const [batchSelectableIds, setBatchSelectableIds] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deletedSessionIds, setDeletedSessionIds] = useState<string[]>([]);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const sessionListScrollRef = useRef<HTMLDivElement>(null);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [isResizing, setIsResizing] = useState(false);
+  const [agentScrollEdges, setAgentScrollEdges] = useState({ top: false, bottom: false });
+  const isResizingRef = useRef(false);
+  const resizeStartXRef = useRef(0);
+  const resizeStartWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
+  const agentScrollContainerRef = useRef<HTMLDivElement>(null);
   const isMac = window.electron.platform === 'darwin';
-
-  const handleSessionListScroll = useCallback(async () => {
-    const el = sessionListScrollRef.current;
-    if (!el || !hasMoreSessions || isLoadingMore) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 100) {
-      setIsLoadingMore(true);
-      await coworkService.loadMoreSessions();
-      setIsLoadingMore(false);
-    }
-  }, [hasMoreSessions, isLoadingMore]);
-
-  // Auto-load more if content doesn't fill the container (no scrollbar = onScroll never fires)
-  useEffect(() => {
-    const el = sessionListScrollRef.current;
-    if (!el || !hasMoreSessions || isLoadingMore) return;
-    if (el.scrollHeight <= el.clientHeight) {
-      setIsLoadingMore(true);
-      coworkService.loadMoreSessions().finally(() => setIsLoadingMore(false));
-    }
-  }, [hasMoreSessions, isLoadingMore, filteredSessions.length]);
+  const batchSelectableIdSet = useMemo(() => new Set(batchSelectableIds), [batchSelectableIds]);
+  const selectedBatchSelectableCount = useMemo(() => {
+    return batchSelectableIds.filter((sessionId) => selectedIds.has(sessionId)).length;
+  }, [batchSelectableIds, selectedIds]);
+  const isBatchSelectAllChecked =
+    batchSelectableIds.length > 0 && selectedBatchSelectableCount === batchSelectableIds.length;
+  const batchAgentName = batchAgentId ? getAgentDisplayNameById(batchAgentId, agents) : null;
 
   useEffect(() => {
     const handleSearch = () => {
@@ -103,39 +107,75 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (!isCollapsed) return;
     setIsSearchOpen(false);
     setIsBatchMode(false);
+    setBatchAgentId(null);
+    setBatchSelectableIds([]);
     setSelectedIds(new Set());
     setShowBatchDeleteConfirm(false);
   }, [isCollapsed]);
 
-  const handleSelectSession = async (sessionId: string) => {
+  const handleSelectSession = async (session: CoworkSessionSummary) => {
+    const agentId = session.agentId?.trim() || AgentId.Main;
+    if (agentId !== currentAgentId) {
+      agentService.switchAgent(agentId);
+      await coworkService.loadSessions(agentId);
+    }
     onShowCowork();
-    await coworkService.loadSession(sessionId);
+    await coworkService.loadSession(session.id);
   };
 
-  const handleDeleteSession = async (sessionId: string) => {
-    await coworkService.deleteSession(sessionId);
-  };
-
-  const handleTogglePin = async (sessionId: string, pinned: boolean) => {
-    await coworkService.setSessionPinned(sessionId, pinned);
-  };
-
-  const handleRenameSession = async (sessionId: string, title: string) => {
-    await coworkService.renameSession(sessionId, title);
-  };
-
-  const handleEnterBatchMode = useCallback((sessionId: string) => {
+  const handleEnterBatchMode = useCallback((sessionId: string, agentId: string) => {
     setIsBatchMode(true);
+    setBatchAgentId(agentId);
+    setBatchSelectableIds([]);
     setSelectedIds(new Set([sessionId]));
   }, []);
 
   const handleExitBatchMode = useCallback(() => {
     setIsBatchMode(false);
+    setBatchAgentId(null);
+    setBatchSelectableIds([]);
     setSelectedIds(new Set());
     setShowBatchDeleteConfirm(false);
   }, []);
 
-  const handleToggleSelection = useCallback((sessionId: string) => {
+  const handleBatchSelectableIdsChange = useCallback((sessionIds: string[]) => {
+    setBatchSelectableIds(sessionIds);
+    setSelectedIds((previous) => {
+      if (!batchAgentId || sessionIds.length === 0) return previous;
+      const sessionIdSet = new Set(sessionIds);
+      const next = new Set(Array.from(previous).filter((sessionId) => sessionIdSet.has(sessionId)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [batchAgentId]);
+
+  const updateAgentScrollEdges = useCallback((element: HTMLDivElement | null) => {
+    if (!element) {
+      setAgentScrollEdges((previousEdges) => (
+        previousEdges.top || previousEdges.bottom ? { top: false, bottom: false } : previousEdges
+      ));
+      return;
+    }
+
+    const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    const nextEdges = {
+      top: element.scrollTop > 1,
+      bottom: maxScrollTop - element.scrollTop > 1,
+    };
+
+    setAgentScrollEdges((previousEdges) => {
+      if (previousEdges.top === nextEdges.top && previousEdges.bottom === nextEdges.bottom) {
+        return previousEdges;
+      }
+      return nextEdges;
+    });
+  }, []);
+
+  const handleAgentScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    updateAgentScrollEdges(event.currentTarget);
+  }, [updateAgentScrollEdges]);
+
+  const handleToggleSelection = useCallback((sessionId: string, agentId: string) => {
+    if (batchAgentId && normalizeAgentId(agentId) !== batchAgentId) return;
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(sessionId)) {
@@ -145,16 +185,18 @@ const Sidebar: React.FC<SidebarProps> = ({
       }
       return next;
     });
-  }, []);
+  }, [batchAgentId]);
 
   const handleSelectAll = useCallback(() => {
+    if (batchSelectableIds.length === 0) return;
     setSelectedIds(prev => {
-      if (prev.size === filteredSessions.length) {
+      const selectedVisibleCount = batchSelectableIds.filter((sessionId) => prev.has(sessionId)).length;
+      if (selectedVisibleCount === batchSelectableIds.length) {
         return new Set();
       }
-      return new Set(filteredSessions.map(s => s.id));
+      return new Set(batchSelectableIds);
     });
-  }, [filteredSessions]);
+  }, [batchSelectableIds]);
 
   const handleBatchDeleteClick = useCallback(() => {
     if (selectedIds.size === 0) return;
@@ -163,17 +205,91 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const handleBatchDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
-    const ids = Array.from(selectedIds);
-    await coworkService.deleteSessions(ids);
+    const ids = Array.from(selectedIds).filter((sessionId) => {
+      return batchSelectableIdSet.size === 0 || batchSelectableIdSet.has(sessionId);
+    });
+    if (ids.length === 0) return;
+    const deleted = await coworkService.deleteSessions(ids);
+    if (!deleted) return;
+    setDeletedSessionIds(ids);
     handleExitBatchMode();
-  }, [selectedIds, handleExitBatchMode]);
+  }, [batchSelectableIdSet, selectedIds, handleExitBatchMode]);
+
+  const handleResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (isCollapsed) return;
+    event.preventDefault();
+    isResizingRef.current = true;
+    setIsResizing(true);
+    resizeStartXRef.current = event.clientX;
+    resizeStartWidthRef.current = sidebarWidth;
+    document.body.classList.add('select-none');
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const nextWidth = resizeStartWidthRef.current + moveEvent.clientX - resizeStartXRef.current;
+      if (nextWidth < MIN_SIDEBAR_WIDTH) {
+        isResizingRef.current = false;
+        setIsResizing(false);
+        document.body.classList.remove('select-none');
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        onToggleCollapse();
+        return;
+      }
+      setSidebarWidth(Math.min(MAX_SIDEBAR_WIDTH, nextWidth));
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      setIsResizing(false);
+      document.body.classList.remove('select-none');
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [isCollapsed, onToggleCollapse, sidebarWidth]);
+
+  useEffect(() => {
+    return () => {
+      document.body.classList.remove('select-none');
+    };
+  }, []);
+
+  useEffect(() => {
+    const element = agentScrollContainerRef.current;
+    if (!element) return;
+
+    updateAgentScrollEdges(element);
+
+    const resizeObserver = new ResizeObserver(() => updateAgentScrollEdges(element));
+    resizeObserver.observe(element);
+    if (element.firstElementChild) {
+      resizeObserver.observe(element.firstElementChild);
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [updateAgentScrollEdges]);
 
   return (
     <aside
-      className={`shrink-0 bg-surface-raised flex flex-col sidebar-transition overflow-hidden ${
-        isCollapsed ? 'w-0' : 'w-60'
+      className={`relative shrink-0 overflow-hidden bg-surface-raised ${
+        isResizing ? '' : 'sidebar-transition'
       }`}
+      style={{ width: isCollapsed ? 0 : sidebarWidth }}
     >
+      <div
+        className={`flex h-full flex-col transition-opacity ease-out ${
+          isCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100'
+        }`}
+        style={{
+          width: sidebarWidth,
+          transitionDuration: `${SIDEBAR_COLLAPSE_TRANSITION_MS}ms`,
+        }}
+      >
       <div className="pt-3 pb-3">
         <div className="draggable sidebar-header-drag h-8 flex items-center justify-between px-3">
           <div className={`${isMac ? 'pl-[68px]' : ''}`}>{updateBadge}</div>
@@ -186,17 +302,13 @@ const Sidebar: React.FC<SidebarProps> = ({
             <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
           </button>
         </div>
-        <div className="mt-3 space-y-1 px-3">
+        <div className="mt-[5px] space-y-0.5 px-3">
           <button
             type="button"
             onClick={onNewChat}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'cowork'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
+            className={sidebarNavItemClassName}
           >
-            <ComposeIcon className="h-4 w-4" />
+            <ComposeIcon className={sidebarCreateIconClassName} />
             {i18nService.t('newChat')}
           </button>
           <button
@@ -205,9 +317,9 @@ const Sidebar: React.FC<SidebarProps> = ({
               onShowCowork();
               setIsSearchOpen(true);
             }}
-            className="w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+            className={sidebarNavItemClassName}
           >
-            <SearchIcon className="h-4 w-4" />
+            <SearchIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('search')}
           </button>
           <button
@@ -216,13 +328,10 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowScheduledTasks();
             }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'scheduledTasks'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
+            className={activeView === 'scheduledTasks' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === 'scheduledTasks' ? 'page' : undefined}
           >
-            <ClockIcon className="h-4 w-4" />
+            <ClockIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('scheduledTasks')}
           </button>
           <button
@@ -231,13 +340,10 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowSkills();
             }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'skills'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
+            className={activeView === 'skills' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === 'skills' ? 'page' : undefined}
           >
-            <PuzzleIcon className="h-4 w-4" />
+            <PuzzleIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('skills')}
           </button>
           <button
@@ -246,109 +352,105 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowMcp();
             }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'mcp'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
+            className={activeView === 'mcp' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === 'mcp' ? 'page' : undefined}
           >
-            <ConnectorIcon className="h-4 w-4" />
+            <ConnectorIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('mcpServers')}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setIsSearchOpen(false);
-              onShowAgents();
-            }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'agents'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
-          >
-            <UserGroupIcon className="h-4 w-4" />
-            {i18nService.t('myAgents')}
-          </button>
         </div>
       </div>
-      <div
-        ref={sessionListScrollRef}
-        className="flex-1 overflow-y-auto px-2.5 pb-4"
-        onScroll={handleSessionListScroll}
-      >
-        <SidebarAgentList
-          onShowCowork={onShowCowork}
-          onSessionsLoadingChange={setSessionsLoading}
-        />
-        <div className="px-3 pb-2 text-sm font-medium text-secondary">
-          {i18nService.t('coworkHistory')}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={agentScrollContainerRef}
+          className="scrollbar-hidden h-full overflow-y-auto px-2.5 pb-10"
+          onScroll={handleAgentScroll}
+        >
+          <MyAgentSidebarTree
+            isBatchMode={isBatchMode}
+            batchAgentId={batchAgentId}
+            deletedSessionIds={deletedSessionIds}
+            selectedIds={selectedIds}
+            onShowCowork={onShowCowork}
+            onToggleSelection={handleToggleSelection}
+            onEnterBatchMode={handleEnterBatchMode}
+            onBatchSelectableIdsChange={handleBatchSelectableIdsChange}
+          />
         </div>
-        <CoworkSessionList
-          sessions={filteredSessions}
-          isLoading={sessionsLoading}
-          currentSessionId={currentSessionId}
-          isBatchMode={isBatchMode}
-          selectedIds={selectedIds}
-          onSelectSession={handleSelectSession}
-          onDeleteSession={handleDeleteSession}
-          onTogglePin={handleTogglePin}
-          onRenameSession={handleRenameSession}
-          onToggleSelection={handleToggleSelection}
-          onEnterBatchMode={handleEnterBatchMode}
+        <div
+          className={`pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-surface-raised to-transparent transition-opacity duration-150 ${
+            agentScrollEdges.top ? 'opacity-100' : 'opacity-0'
+          }`}
         />
-        {isLoadingMore && (
-          <div className="py-2 text-center text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            {i18nService.t('loading')}
-          </div>
-        )}
+        <div
+          className={`pointer-events-none absolute inset-x-0 top-[68px] z-10 h-10 bg-gradient-to-b from-surface-raised to-transparent transition-opacity duration-150 ${
+            agentScrollEdges.top ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+        <div
+          className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 h-16 bg-gradient-to-t from-surface-raised to-transparent transition-opacity duration-150 ${
+            agentScrollEdges.bottom ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
       </div>
+      {!isCollapsed && (
+        <div
+          className="non-draggable absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors"
+          onMouseDown={handleResizeStart}
+        />
+      )}
       <CoworkSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        sessions={filteredSessions}
+        sessions={sessions}
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
-        onDeleteSession={handleDeleteSession}
-        onTogglePin={handleTogglePin}
-        onRenameSession={handleRenameSession}
       />
       {isBatchMode ? (
-        <div className="px-3 pb-3 pt-1 flex items-center justify-between">
-          <label className="flex items-center gap-2 cursor-pointer text-sm text-secondary">
-            <input
-              type="checkbox"
-              checked={selectedIds.size === filteredSessions.length && filteredSessions.length > 0}
-              onChange={handleSelectAll}
-              className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 accent-primary cursor-pointer"
-            />
-            {i18nService.t('batchSelectAll')}
-          </label>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleBatchDeleteClick}
-              disabled={selectedIds.size === 0}
-              className={`inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                selectedIds.size > 0
-                  ? 'bg-red-500 hover:bg-red-600 text-white'
-                  : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-              }`}
-            >
-              <TrashIcon className="h-3.5 w-3.5" />
-              {selectedIds.size > 0 ? `${selectedIds.size}` : ''}
-            </button>
+        <div className="border-t border-border/60 px-3 pb-3 pt-2">
+          <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+            <span className="min-w-0 truncate text-xs text-secondary">
+              {i18nService
+                .t('batchSelectionScope')
+                .replace('{agent}', batchAgentName ?? '')
+                .replace('{count}', String(selectedIds.size))}
+            </span>
             <button
               type="button"
               onClick={handleExitBatchMode}
-              className="px-3 py-1.5 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+              className="shrink-0 rounded-md px-1.5 py-1 text-xs font-medium text-secondary transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
             >
               {i18nService.t('batchCancel')}
             </button>
           </div>
+          <div className="flex items-center gap-2">
+            <label className="inline-flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-1.5 text-[13px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]">
+              <input
+                type="checkbox"
+                checked={isBatchSelectAllChecked}
+                onChange={handleSelectAll}
+                disabled={batchSelectableIds.length === 0}
+                className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 accent-primary disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600"
+              />
+              <span className="truncate">{i18nService.t('batchSelectAll')}</span>
+            </label>
+            <button
+              type="button"
+              onClick={handleBatchDeleteClick}
+              disabled={selectedIds.size === 0}
+              className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[13px] font-medium transition-colors ${
+                selectedIds.size > 0
+                  ? 'bg-red-500 text-white hover:bg-red-600'
+                  : 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-gray-700 dark:text-gray-500'
+              }`}
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+              {i18nService.t('batchDelete')} ({selectedIds.size})
+            </button>
+          </div>
         </div>
       ) : (
-        <div className="px-3 pb-3 pt-1 flex items-center gap-1">
+        <div className="px-3 pb-2 pt-1 flex items-center gap-1">
           {!hideLogin && (
             <div className="flex-1 min-w-0">
               <LoginButton />
@@ -357,26 +459,10 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={() => onShowSettings()}
-            className={`inline-flex items-center justify-start gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-secondary hover:text-foreground hover:bg-surface-raised transition-colors ${hideLogin ? 'w-full' : 'shrink-0'}`}
+            className={`inline-flex h-7 items-center justify-start gap-2 rounded-md px-1.5 text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${hideLogin ? 'w-full' : 'shrink-0'}`}
             aria-label={i18nService.t('settings')}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-4 w-4"
-            >
-              <path d="M14 17H5" />
-              <path d="M19 7h-9" />
-              <circle cx="17" cy="17" r="3" />
-              <circle cx="7" cy="7" r="3" />
-            </svg>
+            <Cog6ToothIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('settings')}
           </button>
         </div>
@@ -418,58 +504,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </Modal>
       )}
-    </aside>
-  );
-};
-
-/* ── Simplified agent list for sidebar quick-switch ─── */
-
-const SidebarAgentList: React.FC<{
-  onShowCowork: () => void;
-  onSessionsLoadingChange: (loading: boolean) => void;
-}> = ({ onShowCowork, onSessionsLoadingChange }) => {
-  const agents = useSelector((state: RootState) => state.agent.agents);
-  const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
-
-  useEffect(() => {
-    agentService.loadAgents();
-  }, []);
-
-  const enabledAgents = agents.filter(a => a.enabled);
-
-  const handleSwitch = async (agentId: string) => {
-    if (agentId === currentAgentId) return;
-    agentService.switchAgent(agentId);
-    onShowCowork();
-    onSessionsLoadingChange(true);
-    try {
-      await coworkService.loadSessions(agentId);
-    } finally {
-      onSessionsLoadingChange(false);
-    }
-  };
-
-  return (
-    <div className="px-3 pb-2">
-      <div className="space-y-0.5">
-        {enabledAgents.map(agent => (
-          <div
-            key={agent.id}
-            className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm cursor-pointer transition-colors ${
-              currentAgentId === agent.id
-                ? 'bg-primary/10 text-primary'
-                : 'text-secondary hover:bg-surface-raised'
-            }`}
-            onClick={() => handleSwitch(agent.id)}
-          >
-            <span className="text-base leading-none">
-              {agent.icon || (agent.id === 'main' ? '🦞' : '🤖')}
-            </span>
-            <span className="truncate flex-1 text-xs font-medium">{agent.name}</span>
-          </div>
-        ))}
       </div>
-    </div>
+    </aside>
   );
 };
 

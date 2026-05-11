@@ -26,9 +26,11 @@ import {
   extractGatewayHistoryEntries,
   extractGatewayMessageText,
   isHeartbeatAckText,
-  isSilentTokenText,
-  isSilentTokenPrefixText,
+  isSilentReplyPrefixText,
+  isSilentReplyText,
   shouldSuppressHeartbeatText,
+  stripTrailingSilentReplyTail,
+  stripTrailingSilentReplyToken,
 } from '../openclawHistory';
 import { buildOpenClawLocalTimeContextPrompt } from '../openclawLocalTimeContextPrompt';
 import { AgentLifecyclePhase, type AgentLifecyclePhase as AgentLifecyclePhaseValue } from './constants';
@@ -227,6 +229,13 @@ type ChannelHistorySyncEntry = {
   text: string;
 };
 
+type ReconciledConversationEntry = {
+  role: 'user' | 'assistant';
+  text: string;
+  metadata?: Record<string, unknown>;
+  timestamp?: number;
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 };
@@ -392,6 +401,37 @@ const isSameHistoryEntry = (
   left: { role: 'user' | 'assistant'; text: string },
   right: { role: 'user' | 'assistant'; text: string },
 ): boolean => left.role === right.role && left.text === right.text;
+
+const historyEntryKey = (entry: { role: 'user' | 'assistant'; text: string }): string => {
+  return `${entry.role}\x1f${entry.text}`;
+};
+
+const isValidMessageTimestamp = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+};
+
+const applyLocalTimestampsToEntries = (
+  entries: ReconciledConversationEntry[],
+  localEntries: Array<{ role: 'user' | 'assistant'; text: string; timestamp?: number }>,
+): ReconciledConversationEntry[] => {
+  const localTimestamps = new Map<string, number[]>();
+  for (const entry of localEntries) {
+    if (!isValidMessageTimestamp(entry.timestamp)) continue;
+    const key = historyEntryKey(entry);
+    const timestamps = localTimestamps.get(key) ?? [];
+    timestamps.push(entry.timestamp);
+    localTimestamps.set(key, timestamps);
+  }
+
+  return entries.map((entry) => {
+    if (isValidMessageTimestamp(entry.timestamp)) {
+      return entry;
+    }
+    const timestamps = localTimestamps.get(historyEntryKey(entry));
+    const timestamp = timestamps?.shift();
+    return timestamp != null ? { ...entry, timestamp } : entry;
+  });
+};
 
 /**
  * Find the tail-alignment point between local and authoritative entries.
@@ -625,7 +665,8 @@ const extractCurrentTurnAssistantText = (messages: unknown[]): string => {
     if (!isRecord(msg)) continue;
     const role = typeof msg.role === 'string' ? msg.role.trim().toLowerCase() : '';
     if (role !== 'assistant') continue;
-    const text = extractMessageText(msg).trim();
+    let text = extractMessageText(msg).trim();
+    text = stripTrailingSilentReplyToken(text);
     if (text && !shouldSuppressHeartbeatText('assistant', text)) {
       textParts.push(text);
     }
@@ -2717,7 +2758,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (stream === 'assistant') {
       const dataField = isRecord(agentPayload.data) ? agentPayload.data as Record<string, unknown> : {};
       const assistantText = extractOpenClawAssistantStreamText(dataField) || extractOpenClawAssistantStreamText(agentPayload);
-      if (!isHeartbeatAckText(assistantText) && !isSilentTokenText(assistantText) && !isSilentTokenPrefixText(assistantText)) {
+      if (!isHeartbeatAckText(assistantText) && !isSilentReplyText(assistantText) && !isSilentReplyPrefixText(assistantText)) {
         this.postponeChatFinalCompletion(sessionId, turn, 'assistant stream continued');
       }
       return;
@@ -2902,7 +2943,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return undefined;
     }
     const isVisibleAssistant = (message: CoworkMessage): boolean =>
-      message.type === 'assistant' && !isSilentTokenText(message.content);
+      message.type === 'assistant' && !isSilentReplyText(message.content);
     if (
       preferredMessageId
       && session.messages.some((message) => message.id === preferredMessageId && isVisibleAssistant(message))
@@ -3298,7 +3339,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (state === 'delta') {
       const deltaText = extractGatewayMessageText(chatPayload.message).trim();
-      if (!isHeartbeatAckText(deltaText) && !isSilentTokenText(deltaText) && !isSilentTokenPrefixText(deltaText)) {
+      if (!isHeartbeatAckText(deltaText) && !isSilentReplyText(deltaText) && !isSilentReplyPrefixText(deltaText)) {
         this.postponeChatFinalCompletion(sessionId, turn, 'chat delta continued');
       }
       this.handleChatDelta(sessionId, turn, chatPayload);
@@ -3428,7 +3469,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const session = this.store.getSession(sessionId);
     if (!session) return;
     const silentAssistantIds = session.messages
-      .filter((message) => message.type === 'assistant' && isSilentTokenText(message.content))
+      .filter((message) => message.type === 'assistant' && isSilentReplyText(message.content))
       .map((message) => message.id);
     for (const messageId of silentAssistantIds) {
       this.deleteAssistantMessage(sessionId, messageId);
@@ -3492,7 +3533,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       return;
     }
-    if (isHeartbeatAckText(text) || isSilentTokenText(text)) {
+    if (isHeartbeatAckText(text) || isSilentReplyText(text)) {
       turn.currentText = text;
       turn.currentAssistantSegmentText = '';
       if (turn.assistantMessageId) {
@@ -3501,9 +3542,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       return;
     }
-    if (isSilentTokenPrefixText(text)) {
+    if (isSilentReplyPrefixText(text)) {
       turn.currentText = text;
       turn.currentAssistantSegmentText = '';
+      if (turn.assistantMessageId) {
+        this.deleteAssistantMessage(sessionId, turn.assistantMessageId);
+        turn.assistantMessageId = null;
+      }
       return;
     }
     this.postponeChatFinalCompletion(sessionId, turn, 'assistant text continued');
@@ -3529,7 +3574,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Update turn text state and push to store.
     turn.currentText = text;
-    turn.currentAssistantSegmentText = this.resolveAssistantSegmentText(turn, text);
+    const displayText = stripTrailingSilentReplyTail(text);
+    turn.currentAssistantSegmentText = this.resolveAssistantSegmentText(turn, displayText);
 
     if (!turn.assistantMessageId && turn.currentAssistantSegmentText) {
       // Create a new message for the new text segment (after split).
@@ -3614,19 +3660,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (!streamedText) return;
-    if (isHeartbeatAckText(streamedText) || isSilentTokenText(streamedText)) {
+    if (isHeartbeatAckText(streamedText) || isSilentReplyText(streamedText)) {
+      turn.currentAssistantSegmentText = '';
       if (turn.assistantMessageId) {
         this.deleteAssistantMessage(sessionId, turn.assistantMessageId);
         turn.assistantMessageId = null;
       }
-      turn.currentAssistantSegmentText = '';
       return;
     }
-    if (isSilentTokenPrefixText(streamedText)) {
+    if (isSilentReplyPrefixText(streamedText)) {
       turn.currentAssistantSegmentText = '';
+      if (turn.assistantMessageId) {
+        this.deleteAssistantMessage(sessionId, turn.assistantMessageId);
+        turn.assistantMessageId = null;
+      }
       return;
     }
-    const segmentText = this.resolveAssistantSegmentText(turn, streamedText);
+    const displayStreamedText = stripTrailingSilentReplyTail(streamedText);
+    const segmentText = this.resolveAssistantSegmentText(turn, displayStreamedText);
     if (!segmentText) return;
     if (segmentText === previousSegmentText && streamedText === previousText) return;
 
@@ -3665,7 +3716,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private async handleChatFinal(sessionId: string, turn: ActiveTurn, payload: ChatEventPayload): Promise<void> {
     const previousText = turn.currentText;
     const previousSegmentText = turn.currentAssistantSegmentText;
-    const finalText = this.resolveFinalTurnText(turn, payload.message);
+    const rawFinalText = this.resolveFinalTurnText(turn, payload.message);
+    const finalText = stripTrailingSilentReplyToken(rawFinalText);
     console.debug(
       '[OpenClawRuntime] handleChatFinal:',
       `sessionId=${sessionId}`,
@@ -3688,7 +3740,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.resolveTurn(sessionId);
       return;
     }
-    if (isSilentTokenText(finalText)) {
+    if (isSilentReplyText(finalText) || isSilentReplyPrefixText(finalText)) {
       turn.currentText = finalText;
       turn.currentAssistantSegmentText = '';
       if (turn.assistantMessageId) {
@@ -4199,6 +4251,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const command = typeof request.command === 'string' ? request.command : '';
     const isChannelSession = parseChannelSessionKey(sessionKey) !== null;
 
+    // Suppress ALL approvals (including auto-approvals) for sessions that the
+    // user has already stopped.  Without this early return, non-delete commands
+    // would be auto-approved below before the cooldown check, allowing the
+    // gateway-side run to keep executing new tool calls after the user clicked
+    // Stop (e.g. a crawler task continuing to fetch pages).
+    // The Gateway-side run will time out on its own.
+    if (this.isSessionInStopCooldown(sessionId)) {
+      console.log('[OpenClawRuntime] suppressed approval for stopped session, requestId:', requestId, 'sessionId:', sessionId);
+      return;
+    }
+    // Also suppress for desktop sessions that were manually stopped (persists
+    // beyond the 10s cooldown window until the next runTurn or session deletion).
+    if (this.manuallyStoppedSessions.has(sessionId) && isManagedSessionKey(sessionKey)) {
+      console.log('[OpenClawRuntime] suppressed approval for manually stopped desktop session, requestId:', requestId, 'sessionId:', sessionId);
+      return;
+    }
+
     // Auto-approve: channel sessions always, local sessions for non-delete commands.
     // Intentionally allows non-delete dangerous commands (git push, kill, chmod) without
     // prompting — this is a deliberate trade-off to avoid the approval-pending timing
@@ -4208,12 +4277,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (isChannelSession || !isDeleteCommand(command)) {
       this.pendingApprovals.set(requestId, { requestId, sessionId, allowAlways: true });
       this.respondToPermission(requestId, { behavior: 'allow', updatedInput: {} });
-    }
-    // Suppress approval popups for sessions in stop cooldown — the user
-    // already stopped the session, so showing a new permission dialog
-    // would be confusing.  The Gateway-side run will time out on its own.
-    if (this.isSessionInStopCooldown(sessionId)) {
-      return;
     }
 
     this.pendingApprovals.set(requestId, { requestId, sessionId });
@@ -4328,7 +4391,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     );
 
     for (const entry of systemEntries) {
-      if (isHeartbeatAckText(entry.text)) {
+      if (isHeartbeatAckText(entry.text) || isSilentReplyText(entry.text)) {
         continue;
       }
       if (existingSystemTexts.has(entry.text)) {
@@ -4425,7 +4488,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const platformFlags: PlatformFlags = { isDiscord, isQQ, isPopo, isFeishu };
 
       // Extract authoritative user/assistant entries from gateway history
-      const authoritativeEntries: Array<{ role: 'user' | 'assistant'; text: string; metadata?: Record<string, unknown> }> = [];
+      const authoritativeEntries: ReconciledConversationEntry[] = [];
       for (const entry of extractGatewayHistoryEntries(history.messages)) {
         const role = entry.role;
         if (role !== 'user' && role !== 'assistant') continue;
@@ -4445,7 +4508,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             metadata.model = entry.model;
           }
         }
-        authoritativeEntries.push({ role: role as 'user' | 'assistant', text, ...(metadata && { metadata }) });
+        authoritativeEntries.push({
+          role: role as 'user' | 'assistant',
+          text,
+          ...(metadata && { metadata }),
+          ...(entry.timestamp != null && { timestamp: entry.timestamp }),
+        });
       }
 
       // For channel sessions, append file paths from "message" tool calls
@@ -4475,13 +4543,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Apply the same normalization as authoritativeEntries so alignment
       // works even when local messages still carry raw platform prefixes.
       const session = this.store.getSession(sessionId);
-      const localEntries: Array<{ role: 'user' | 'assistant'; text: string }> = [];
+      const localEntries: Array<{ role: 'user' | 'assistant'; text: string; timestamp?: number }> = [];
       if (session) {
         for (const msg of session.messages) {
           if (msg.type !== 'user' && msg.type !== 'assistant') continue;
           const text = normalizeEntryText(msg.type, msg.content, platformFlags);
           if (!text || shouldSuppressHeartbeatText(msg.type, text)) continue;
-          localEntries.push({ role: msg.type, text });
+          localEntries.push({ role: msg.type, text, timestamp: msg.timestamp });
         }
       }
 
@@ -4501,7 +4569,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Tail-alignment: find where the gateway window overlaps local history.
       const alignment = findTailAlignment(localEntries, authoritativeEntries);
 
-      let entriesToStore: Array<{ role: 'user' | 'assistant'; text: string; metadata?: Record<string, unknown> }>;
+      let entriesToStore: ReconciledConversationEntry[];
 
       if (alignment && (alignment.localIdx > 0 || alignment.authIdx > 0)) {
         // Gateway covers only the tail — preserve older local messages
@@ -4539,7 +4607,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         );
       }
 
-      this.store.replaceConversationMessages(sessionId, entriesToStore);
+      this.store.replaceConversationMessages(sessionId, applyLocalTimestampsToEntries(entriesToStore, localEntries));
       this.channelSyncCursor.set(sessionId, authoritativeEntries.length);
 
       // Notify renderer to refresh

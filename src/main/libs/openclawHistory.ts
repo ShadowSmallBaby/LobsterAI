@@ -8,13 +8,14 @@ type GatewayHistoryRole = 'user' | 'assistant' | 'system';
 export interface GatewayHistoryEntry {
   role: GatewayHistoryRole;
   text: string;
+  timestamp?: number;
   usage?: { input?: number; output?: number; cacheRead?: number; totalTokens?: number };
   model?: string;
 }
 
 const HEARTBEAT_ACK_RE = /^[`*_~"'“”‘’()[\]{}<>.,!?;:，。！？；：\s-]{0,8}HEARTBEAT_OK[`*_~"'“”‘’()[\]{}<>.,!?;:，。！？；：\s-]{0,8}$/i;
-const SILENT_TOKEN_RE = /^[`*_~"'“”‘’()[\]{}<>.,!?;:，。！？；：\s-]{0,8}NO_REPLY[`*_~"'“”‘’()[\]{}<>.,!?;:，。！？；：\s-]{0,8}$/i;
-const SILENT_TOKEN_PREFIX_RE = /^[`*_~"'“”‘’()[\]{}<>.,!?;:，。！？；：\s-]{0,8}(?:N|NO|NO_|NO_R|NO_RE|NO_REP|NO_REPL|NO_REPLY)$/i;
+const SILENT_REPLY_RE = /^[`*_~"'“”‘’()[\]{}<>.,!?;:，。！？；：\s-]{0,8}NO_REPLY[`*_~"'“”‘’()[\]{}<>.,!?;:，。！？；：\s-]{0,8}$/i;
+const SILENT_REPLY_TOKEN = 'NO_REPLY';
 const HEARTBEAT_PROMPT_MARKERS = [
   'read heartbeat.md if it exists',
   'when reading heartbeat.md',
@@ -63,6 +64,35 @@ const collectTextChunks = (value: unknown): string[] => {
   return chunks;
 };
 
+const parseGatewayTimestamp = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric;
+  }
+
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+const extractGatewayTimestamp = (message: Record<string, unknown>): number | undefined => {
+  return parseGatewayTimestamp(message.timestamp)
+    ?? parseGatewayTimestamp(message.createdAt)
+    ?? parseGatewayTimestamp(message.created_at)
+    ?? parseGatewayTimestamp(message.time);
+};
+
 export const extractGatewayMessageText = (message: unknown): string => {
   if (typeof message === 'string') {
     return message;
@@ -104,11 +134,43 @@ export const buildScheduledReminderSystemMessage = (text: string): string | null
 
 export const isHeartbeatAckText = (text: string): boolean => HEARTBEAT_ACK_RE.test(text.trim());
 
-export const isSilentTokenText = (text: string): boolean => SILENT_TOKEN_RE.test(text.trim());
+export const isSilentReplyText = (text: string): boolean => SILENT_REPLY_RE.test(text.trim());
 
-export const isSilentTokenPrefixText = (text: string): boolean => {
-  const trimmed = text.trim();
-  return trimmed.length > 0 && !isSilentTokenText(trimmed) && SILENT_TOKEN_PREFIX_RE.test(trimmed);
+export const isSilentReplyPrefixText = (text: string): boolean => {
+  const trimmed = text.trimStart();
+  if (!trimmed || trimmed.length < 2) return false;
+  if (isSilentReplyText(trimmed)) return false;
+  if (trimmed !== trimmed.toUpperCase()) return false;
+  if (/[^A-Z_]/.test(trimmed)) return false;
+  const tokenUpper = SILENT_REPLY_TOKEN.toUpperCase();
+  if (!tokenUpper.startsWith(trimmed)) return false;
+  if (trimmed.includes('_')) return true;
+  return trimmed === 'NO';
+};
+
+const TRAILING_SILENT_REPLY_RE = /\n\s*NO_REPLY\s*$/i;
+
+export const stripTrailingSilentReplyToken = (text: string): string => {
+  return text.replace(TRAILING_SILENT_REPLY_RE, '').trimEnd();
+};
+
+const TRAILING_SILENT_REPLY_PARTIAL_TOKENS = [
+  'NO_REPLY', 'NO_REPL', 'NO_REP', 'NO_RE', 'NO_R', 'NO_', 'NO',
+];
+
+export const stripTrailingSilentReplyTail = (text: string): string => {
+  const stripped = text.replace(TRAILING_SILENT_REPLY_RE, '');
+  if (stripped !== text) return stripped.trimEnd();
+  const lastNewline = text.lastIndexOf('\n');
+  if (lastNewline < 0) return text;
+  const tail = text.slice(lastNewline + 1).trim().toUpperCase();
+  if (!tail) return text;
+  for (const token of TRAILING_SILENT_REPLY_PARTIAL_TOKENS) {
+    if (tail === token) {
+      return text.slice(0, lastNewline).trimEnd();
+    }
+  }
+  return text;
 };
 
 export const isHeartbeatPromptText = (text: string): boolean => {
@@ -128,7 +190,7 @@ export const isPreCompactionMemoryFlushPromptText = (text: string): boolean => {
 };
 
 export const shouldSuppressHeartbeatText = (role: GatewayHistoryRole, text: string): boolean => {
-  if ((role === 'assistant' || role === 'system') && (isHeartbeatAckText(text) || isSilentTokenText(text))) {
+  if ((role === 'assistant' || role === 'system') && (isHeartbeatAckText(text) || isSilentReplyText(text))) {
     return true;
   }
   if (role === 'user' && (isHeartbeatPromptText(text) || isPreCompactionMemoryFlushPromptText(text))) {
@@ -147,9 +209,15 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
     return null;
   }
 
-  const text = extractGatewayMessageText(message).trim();
+  let text = extractGatewayMessageText(message).trim();
   if (!text) {
     return null;
+  }
+  if (role === 'assistant') {
+    text = stripTrailingSilentReplyToken(text);
+    if (!text) {
+      return null;
+    }
   }
   if (shouldSuppressHeartbeatText(role, text)) {
     return null;
@@ -158,10 +226,12 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
   const reminderSystemMessage = role === 'user'
     ? buildScheduledReminderSystemMessage(text)
     : null;
+  const timestamp = extractGatewayTimestamp(message);
   if (reminderSystemMessage) {
     return {
       role: 'system',
       text: reminderSystemMessage,
+      ...(timestamp != null && { timestamp }),
     };
   }
 
@@ -195,6 +265,7 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
   return {
     role,
     text,
+    ...(timestamp != null && { timestamp }),
     ...(usage && { usage }),
     ...(model && { model }),
   };

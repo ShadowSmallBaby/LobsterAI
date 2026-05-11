@@ -5,6 +5,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 
+import { AgentId, DefaultAgentAvatarIcon, DefaultAgentProfile, LegacyAgentName, normalizeAgentAvatarIcon } from '../shared/agent';
 import { DB_FILENAME } from './appConstants';
 import {
   openSqliteDatabaseWithRecovery,
@@ -79,6 +80,7 @@ export class SqliteStore {
         claude_session_id TEXT,
         status TEXT NOT NULL DEFAULT 'idle',
         pinned INTEGER NOT NULL DEFAULT 0,
+        pin_order INTEGER,
         cwd TEXT NOT NULL,
         system_prompt TEXT NOT NULL DEFAULT '',
         model_override TEXT NOT NULL DEFAULT '',
@@ -170,6 +172,8 @@ export class SqliteStore {
         icon TEXT NOT NULL DEFAULT '',
         skill_ids TEXT NOT NULL DEFAULT '[]',
         enabled INTEGER NOT NULL DEFAULT 1,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        pin_order INTEGER,
         is_default INTEGER NOT NULL DEFAULT 0,
         source TEXT NOT NULL DEFAULT 'custom',
         preset_id TEXT NOT NULL DEFAULT '',
@@ -205,6 +209,11 @@ export class SqliteStore {
 
       if (!colNames.includes('pinned')) {
         this.db.exec('ALTER TABLE cowork_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;');
+        this.didRunMigration = true;
+      }
+
+      if (!colNames.includes('pin_order')) {
+        this.db.exec('ALTER TABLE cowork_sessions ADD COLUMN pin_order INTEGER;');
         this.didRunMigration = true;
       }
 
@@ -244,8 +253,16 @@ export class SqliteStore {
     }
 
     try {
-      this.db.exec('UPDATE cowork_sessions SET pinned = 0 WHERE pinned IS NULL;');
-      this.didRunMigration = true;
+      const pinnedResult = this.db.prepare('UPDATE cowork_sessions SET pinned = 0 WHERE pinned IS NULL;').run();
+      const pinOrderResult = this.db
+        .prepare('UPDATE cowork_sessions SET pin_order = updated_at WHERE pinned = 1 AND pin_order IS NULL;')
+        .run();
+      const unpinnedResult = this.db
+        .prepare('UPDATE cowork_sessions SET pin_order = NULL WHERE pinned = 0 AND pin_order IS NOT NULL;')
+        .run();
+      if (pinnedResult.changes > 0 || pinOrderResult.changes > 0 || unpinnedResult.changes > 0) {
+        this.didRunMigration = true;
+      }
     } catch {
       // Column might not exist yet.
     }
@@ -272,13 +289,38 @@ export class SqliteStore {
         this.db.exec("ALTER TABLE agents ADD COLUMN working_directory TEXT NOT NULL DEFAULT '';");
         this.didRunMigration = true;
       }
+      if (!agentColNames.includes('pinned')) {
+        this.db.exec('ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;');
+        this.didRunMigration = true;
+      }
+      if (!agentColNames.includes('pin_order')) {
+        this.db.exec('ALTER TABLE agents ADD COLUMN pin_order INTEGER;');
+        this.didRunMigration = true;
+      }
     } catch {
       // Column already exists or migration not needed.
     }
 
-    // Migration: Ensure default 'main' agent exists
     try {
-      const mainAgent = this.db.prepare("SELECT id FROM agents WHERE id = 'main'").get();
+      const pinnedAgentResult = this.db.prepare('UPDATE agents SET pinned = 0 WHERE pinned IS NULL;').run();
+      const pinOrderAgentResult = this.db
+        .prepare('UPDATE agents SET pin_order = updated_at WHERE pinned = 1 AND pin_order IS NULL;')
+        .run();
+      const unpinnedAgentResult = this.db
+        .prepare('UPDATE agents SET pin_order = NULL WHERE pinned = 0 AND pin_order IS NOT NULL;')
+        .run();
+      if (pinnedAgentResult.changes > 0 || pinOrderAgentResult.changes > 0 || unpinnedAgentResult.changes > 0) {
+        this.didRunMigration = true;
+      }
+    } catch {
+      // Columns might not exist yet.
+    }
+
+    // Migration: Ensure default agent exists and legacy display values are upgraded.
+    try {
+      const mainAgent = this.db
+        .prepare('SELECT id, name, icon FROM agents WHERE id = ?')
+        .get(AgentId.Main) as { id: string; name: string; icon: string } | undefined;
       if (!mainAgent) {
         const now = Date.now();
         // Read existing systemPrompt from cowork_config to inherit into main agent
@@ -297,13 +339,46 @@ export class SqliteStore {
           .prepare(
             `
           INSERT INTO agents (id, name, description, system_prompt, identity, model, icon, skill_ids, enabled, is_default, source, preset_id, created_at, updated_at)
-          VALUES ('main', 'main', '', ?, '', '', '', '[]', 1, 1, 'custom', '', ?, ?)
+          VALUES (?, ?, '', ?, '', '', ?, '[]', 1, 1, 'custom', '', ?, ?)
         `,
           )
-          .run(existingSystemPrompt, now, now);
+          .run(AgentId.Main, DefaultAgentProfile.Name, existingSystemPrompt, DefaultAgentAvatarIcon, now, now);
+      } else {
+        const normalizedName = mainAgent.name.trim();
+        const shouldUpgradeName = !normalizedName || normalizedName.toLowerCase() === LegacyAgentName.Main;
+        if (shouldUpgradeName) {
+          this.db
+            .prepare('UPDATE agents SET name = ?, updated_at = ? WHERE id = ?')
+            .run(DefaultAgentProfile.Name, Date.now(), AgentId.Main);
+          this.didRunMigration = true;
+        }
       }
     } catch (error) {
-      console.warn('Failed to ensure main agent:', error);
+      console.warn('[SqliteStore] failed to ensure default agent:', error);
+    }
+
+    // Migration: Replace legacy text/emoji/designed agent icons with the latest SVG avatar format.
+    try {
+      const rows = this.db
+        .prepare('SELECT id, icon FROM agents')
+        .all() as Array<{ id: string; icon: string }>;
+      const updates = rows
+        .map((row) => ({ id: row.id, icon: normalizeAgentAvatarIcon(row.icon) }))
+        .filter((row, index) => row.icon !== rows[index].icon);
+
+      if (updates.length > 0) {
+        const now = Date.now();
+        const updateIcon = this.db.prepare('UPDATE agents SET icon = ?, updated_at = ? WHERE id = ?');
+        const migrateIcons = this.db.transaction((agents: Array<{ id: string; icon: string }>) => {
+          for (const agent of agents) {
+            updateIcon.run(agent.icon, now, agent.id);
+          }
+        });
+        migrateIcons(updates);
+        this.didRunMigration = true;
+      }
+    } catch (error) {
+      console.warn('[SqliteStore] failed to migrate agent avatar icons:', error);
     }
 
     // Migration: Backfill agent working directories from the legacy global cwd once.
