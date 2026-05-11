@@ -555,6 +555,11 @@ interface IElectronAPI {
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
     openHtmlInBrowser: (htmlContent: string) => Promise<{ success: boolean; error?: string }>;
   };
+  artifact: {
+    watchFile: (filePath: string) => Promise<void>;
+    unwatchFile: (filePath: string) => Promise<void>;
+    onFileChanged: (callback: (data: { filePath: string }) => void) => () => void;
+  };
   autoLaunch: {
     get: () => Promise<{ enabled: boolean }>;
     set: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;

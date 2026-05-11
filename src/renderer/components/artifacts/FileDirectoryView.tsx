@@ -98,7 +98,7 @@ const FileDirectoryView: React.FC<FileDirectoryViewProps> = ({ artifacts, select
       <div className="flex-1 overflow-y-auto">
         {sortedAndFiltered.length === 0 ? (
           <div className="flex items-center justify-center text-muted text-xs p-4">
-            {t('artifactEmptyFiles')}
+            {t('artifactSearchEmpty')}
           </div>
         ) : (
           sortedAndFiltered.map((artifact, idx) => {

@@ -765,7 +765,7 @@ const PptxSubRenderer: React.FC<{ artifact: Artifact }> = ({ artifact }) => {
         <iframe
           ref={iframeRef}
           className="w-full h-full border-0"
-          sandbox="allow-same-origin"
+          sandbox="allow-scripts allow-same-origin"
           title={artifact.title || 'PPTX Preview'}
         />
       </div>
@@ -844,7 +844,7 @@ const PptxHtmlFallback: React.FC<{ artifact: Artifact; data: ArrayBuffer }> = ({
               srcDoc={html}
               className="w-full border-0 rounded"
               style={{ aspectRatio: '16/9' }}
-              sandbox="allow-same-origin"
+              sandbox="allow-scripts allow-same-origin"
               title={`Slide ${i + 1}`}
             />
           </div>

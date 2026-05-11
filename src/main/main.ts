@@ -5131,6 +5131,44 @@ if (!gotTheLock) {
     }
   });
 
+  // ---- artifact file watching ----
+  const fileWatchers = new Map<string, { watcher: fs.FSWatcher; debounceTimer: ReturnType<typeof setTimeout> | null }>();
+
+  ipcMain.handle('artifact:watchFile', (_event, filePath: string) => {
+    if (fileWatchers.has(filePath)) return;
+    try {
+      const watcher = fs.watch(filePath, (eventType) => {
+        if (eventType !== 'change') return;
+        const entry = fileWatchers.get(filePath);
+        if (!entry) return;
+        if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
+        entry.debounceTimer = setTimeout(() => {
+          entry.debounceTimer = null;
+          const windows = BrowserWindow.getAllWindows();
+          windows.forEach(win => {
+            if (!win.isDestroyed()) {
+              try { win.webContents.send('artifact:file:changed', { filePath }); } catch { /* */ }
+            }
+          });
+        }, 300);
+      });
+      watcher.on('error', () => {
+        fileWatchers.delete(filePath);
+        watcher.close();
+      });
+      fileWatchers.set(filePath, { watcher, debounceTimer: null });
+    } catch { /* file can't be watched */ }
+  });
+
+  ipcMain.handle('artifact:unwatchFile', (_event, filePath: string) => {
+    const entry = fileWatchers.get(filePath);
+    if (entry) {
+      if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
+      entry.watcher.close();
+      fileWatchers.delete(filePath);
+    }
+  });
+
   ipcMain.handle(AppUpdateIpc.GetState, async () => {
     return getAppUpdateCoordinator().getState();
   });

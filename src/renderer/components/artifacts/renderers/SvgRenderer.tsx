@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify';
-import React, { useCallback,useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
 
 import type { Artifact } from '@/types/artifact';
 
@@ -19,7 +19,7 @@ const SvgRenderer: React.FC<SvgRendererProps> = ({ artifact }) => {
     });
   }, [artifact.content]);
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
+  const handleWheel = useCallback((e: WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
       setScale(prev => Math.max(0.1, Math.min(5, prev - e.deltaY * 0.001)));
@@ -28,8 +28,15 @@ const SvgRenderer: React.FC<SvgRendererProps> = ({ artifact }) => {
 
   const resetZoom = useCallback(() => setScale(1), []);
 
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [handleWheel]);
+
   return (
-    <div className="relative w-full h-full overflow-auto" ref={containerRef} onWheel={handleWheel}>
+    <div className="relative w-full h-full overflow-auto" ref={containerRef}>
       <div
         className="flex items-center justify-center min-h-full p-4"
         style={{ transform: `scale(${scale})`, transformOrigin: 'center center' }}

@@ -377,6 +377,15 @@ contextBridge.exposeInMainWorld('electron', {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
     openHtmlInBrowser: (htmlContent: string) => ipcRenderer.invoke('shell:openHtmlInBrowser', htmlContent),
   },
+  artifact: {
+    watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),
+    unwatchFile: (filePath: string) => ipcRenderer.invoke('artifact:unwatchFile', filePath),
+    onFileChanged: (callback: (data: { filePath: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { filePath: string }) => callback(data);
+      ipcRenderer.on('artifact:file:changed', handler);
+      return () => { ipcRenderer.removeListener('artifact:file:changed', handler); };
+    },
+  },
   autoLaunch: {
     get: () => ipcRenderer.invoke('app:getAutoLaunch'),
     set: (enabled: boolean) => ipcRenderer.invoke('app:setAutoLaunch', enabled),

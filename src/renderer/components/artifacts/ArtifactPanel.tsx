@@ -30,6 +30,8 @@ const BROWSER_OPENABLE_TYPES = new Set<ArtifactType>(['html', 'svg', 'mermaid'])
 
 const SYSTEM_OPENABLE_TYPES = new Set<ArtifactType>(['document']);
 
+const NON_CODE_TYPES = new Set<ArtifactType>(['document', 'image']);
+
 function buildBrowserHtml(artifact: Artifact): string | null {
   switch (artifact.type) {
     case 'html':
@@ -131,6 +133,29 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showFileList]);
 
+  // Auto-refresh when the previewed file changes on disk
+  useEffect(() => {
+    const filePath = selectedArtifact?.filePath;
+    if (!filePath) return;
+
+    let cleanup: (() => void) | undefined;
+    let watchedPath: string | null = null;
+
+    window.electron?.artifact?.watchFile(filePath);
+    watchedPath = filePath;
+
+    cleanup = window.electron?.artifact?.onFileChanged(({ filePath: changedPath }) => {
+      if (changedPath === watchedPath) {
+        handleRefreshRef.current();
+      }
+    });
+
+    return () => {
+      if (cleanup) cleanup();
+      if (watchedPath) window.electron?.artifact?.unwatchFile(watchedPath);
+    };
+  }, [selectedArtifact?.filePath]);
+
   const handleClose = useCallback(() => dispatch(closePanel()), [dispatch]);
   const handleSelectArtifact = useCallback((id: string) => {
     dispatch(selectArtifact(id));
@@ -151,6 +176,16 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
 
   const handleOpenInBrowser = useCallback(() => {
     if (!selectedArtifact) return;
+
+    // Mermaid needs HTML wrapper with mermaid.js to render in browser
+    if (selectedArtifact.type === 'mermaid') {
+      if (!selectedArtifact.content) return;
+      const html = buildBrowserHtml(selectedArtifact);
+      if (html) {
+        window.electron?.shell?.openHtmlInBrowser(html);
+      }
+      return;
+    }
 
     // Has file on disk: open directly
     if (selectedArtifact.filePath) {
@@ -210,6 +245,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       // File unreadable or missing
     }
   }, [selectedArtifact, dispatch]);
+
+  const handleRefreshRef = useRef(handleRefresh);
+  handleRefreshRef.current = handleRefresh;
 
   return (
     <>
@@ -317,16 +355,18 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               >
                 {t('artifactPreview')}
               </button>
-              <button
-                onClick={() => dispatch(setActiveTab('code'))}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${
-                  activeTab === 'code'
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-secondary hover:text-foreground'
-                }`}
-              >
-                {t('artifactCode')}
-              </button>
+              {!NON_CODE_TYPES.has(selectedArtifact.type) && (
+                <button
+                  onClick={() => dispatch(setActiveTab('code'))}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${
+                    activeTab === 'code'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-secondary hover:text-foreground'
+                  }`}
+                >
+                  {t('artifactCode')}
+                </button>
+              )}
             </div>
 
             {/* Render area */}
