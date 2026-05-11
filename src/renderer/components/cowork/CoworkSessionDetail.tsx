@@ -1217,7 +1217,9 @@ export const UserMessageItem: React.FC<{
     setIsHovered(false);
   }, []);
   const handleMouseLeave = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (hasFocusWithin(event.currentTarget)) return;
+    if (document.activeElement instanceof HTMLElement && event.currentTarget.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
     setIsHovered(false);
   }, []);
 
@@ -1343,7 +1345,9 @@ const AssistantMessageItem: React.FC<{
     setIsHovered(false);
   }, []);
   const handleMouseLeave = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (hasFocusWithin(event.currentTarget)) return;
+    if (document.activeElement instanceof HTMLElement && event.currentTarget.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
     setIsHovered(false);
   }, []);
 
