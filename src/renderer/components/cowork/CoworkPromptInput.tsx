@@ -954,6 +954,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       <ModelSelector
         compact={useHomeContextLayout}
         dropdownDirection="up"
+        alignDropdownToTriggerEnd={useHomeContextLayout}
         disabled={isPatchingModel || isPersistingAgentModel}
         value={agentModelIsInvalid && currentSession?.modelOverride
           ? { id: '__invalid__', name: currentSession.modelOverride.split('/').pop() || currentSession.modelOverride } as Model
@@ -1177,7 +1178,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   </div>
                 </div>
               </div>
-              <div className="-mt-2 flex min-h-10 items-center gap-2.5 rounded-b-2xl bg-black/[0.035] px-4 pb-2 pt-3.5 dark:bg-white/[0.05]">
+              <div className="-mt-2 flex min-h-10 items-center gap-1 rounded-b-2xl bg-black/[0.035] px-4 pb-2 pt-3.5 dark:bg-white/[0.05]">
                 {showFolderSelector && (
                   <div className="relative min-w-0 shrink">
                     <button

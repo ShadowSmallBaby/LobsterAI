@@ -1,12 +1,14 @@
-import { CheckIcon,ChevronDownIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
+import { ProviderName } from '@shared/providers';
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { useDispatch,useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 
+import { getProviderIcon, ProviderIconId } from '../providers/uiRegistry';
 import { i18nService } from '../services/i18n';
 import { RootState } from '../store';
 import type { Model } from '../store/slices/modelSlice';
-import { getModelIdentityKey,isSameModelIdentity, setSelectedModel } from '../store/slices/modelSlice';
+import { getModelIdentityKey, isSameModelIdentity, setSelectedModel } from '../store/slices/modelSlice';
 
 interface ModelSelectorProps {
   dropdownDirection?: 'up' | 'down' | 'auto';
@@ -25,11 +27,26 @@ interface ModelSelectorProps {
   compact?: boolean;
   /** Render the dropdown outside the local stacking context. */
   portal?: boolean;
+  /** Align the dropdown's trailing edge with the trigger's trailing edge. */
+  alignDropdownToTriggerEnd?: boolean;
 }
 
-const DROPDOWN_MAX_HEIGHT = 256; // matches max-h-64
+const DROPDOWN_MAX_HEIGHT = 288; // matches max-h-72
 const DROPDOWN_WIDTH = 240; // matches w-60
 const DROPDOWN_VIEWPORT_MARGIN = 8;
+const MODEL_ICON_CLASS_NAME = 'h-[18px] w-[18px]';
+const MODEL_ICON_PROVIDER_HINTS: Array<{ pattern: RegExp; providerName: ProviderName | ProviderIconId }> = [
+  { pattern: /doubao|豆包/i, providerName: ProviderIconId.Doubao },
+  { pattern: /deepseek/i, providerName: ProviderName.DeepSeek },
+  { pattern: /minimax/i, providerName: ProviderName.Minimax },
+  { pattern: /kimi|moonshot/i, providerName: ProviderName.Moonshot },
+  { pattern: /glm|zhipu/i, providerName: ProviderName.Zhipu },
+  { pattern: /qwen|qwq|qvq/i, providerName: ProviderName.Qwen },
+  { pattern: /hy3|youdao/i, providerName: ProviderName.Youdaozhiyun },
+  { pattern: /claude|anthropic/i, providerName: ProviderName.Anthropic },
+  { pattern: /gemini/i, providerName: ProviderName.Gemini },
+  { pattern: /gpt|openai/i, providerName: ProviderName.OpenAI },
+];
 
 const ModelSelector: React.FC<ModelSelectorProps> = ({
   dropdownDirection = 'auto',
@@ -39,6 +56,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   disabled = false,
   compact = false,
   portal = false,
+  alignDropdownToTriggerEnd = false,
 }) => {
   const dispatch = useDispatch();
   const [isOpen, setIsOpen] = React.useState(false);
@@ -85,8 +103,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const updatePortalPosition = React.useCallback((direction: 'up' | 'down') => {
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
+    const desiredLeft = alignDropdownToTriggerEnd
+      ? rect.right - DROPDOWN_WIDTH
+      : rect.left;
     const left = Math.min(
-      Math.max(rect.left, DROPDOWN_VIEWPORT_MARGIN),
+      Math.max(desiredLeft, DROPDOWN_VIEWPORT_MARGIN),
       window.innerWidth - DROPDOWN_WIDTH - DROPDOWN_VIEWPORT_MARGIN
     );
     const nextStyle: React.CSSProperties = {
@@ -103,7 +124,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     }
 
     setPortalStyle(nextStyle);
-  }, []);
+  }, [alignDropdownToTriggerEnd]);
 
   React.useEffect(() => {
     if (!isOpen || !portal) return;
@@ -154,6 +175,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const dropdownPositionClass = resolvedDirection === 'up'
     ? 'bottom-full mb-1'
     : 'top-full mt-1';
+  const dropdownAlignmentClass = alignDropdownToTriggerEnd ? 'right-0' : 'left-0';
 
   const serverModels = availableModels.filter(m => m.isServerModel);
   const userModels = availableModels.filter(m => !m.isServerModel);
@@ -162,6 +184,24 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const isSelected = (model: Model): boolean => {
     if (!selectedModel) return false;
     return isSameModelIdentity(model, selectedModel);
+  };
+  const resolveModelIconProviderKey = (model: Model): string => {
+    const providerKey = model.providerKey?.trim();
+    if (providerKey && providerKey !== ProviderName.LobsteraiServer) return providerKey;
+
+    const searchableText = `${model.name} ${model.id}`;
+    return MODEL_ICON_PROVIDER_HINTS.find(({ pattern }) => pattern.test(searchableText))?.providerName
+      ?? providerKey
+      ?? '';
+  };
+  const renderProviderIcon = (model: Model): React.ReactNode => {
+    const icon = getProviderIcon(resolveModelIconProviderKey(model));
+    if (!React.isValidElement<{ className?: string }>(icon)) return icon;
+
+    const existingClassName = icon.props.className ? `${icon.props.className} ` : '';
+    return React.cloneElement(icon, {
+      className: `${existingClassName}${MODEL_ICON_CLASS_NAME}`,
+    });
   };
   const triggerClassName = compact
     ? 'space-x-1.5 px-2 py-1 rounded-lg max-w-[220px]'
@@ -176,32 +216,32 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       type="button"
       key={getModelIdentityKey(model)}
       onClick={() => handleModelSelect(model)}
-      className={`w-full px-4 py-2.5 text-left dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center justify-between transition-colors ${
+      className={`w-full px-3 py-2 text-left dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2.5 transition-colors ${
         isSelected(model) ? 'dark:bg-claude-darkSurfaceHover/50 bg-claude-surfaceHover/50' : ''
       }`}
     >
-      <div className="flex flex-col min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm truncate">{model.name}</span>
-          {model.supportsImage && (
-            <span className="text-[10px] leading-none px-1.5 py-0.5 rounded-md bg-primary/10 text-primary whitespace-nowrap">
-              {i18nService.t('imageInput')}
-            </span>
-          )}
-        </div>
-        {model.provider && (
-          <span className="text-xs text-secondary truncate">{model.provider}</span>
-        )}
-      </div>
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center text-secondary">
+        {renderProviderIcon(model)}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[13px] font-normal leading-5">
+        {model.name}
+      </span>
+      {model.supportsImage && (
+        <span className="shrink-0 rounded-md bg-surface-raised px-1.5 py-0.5 text-[10px] font-medium leading-none text-secondary">
+          {i18nService.t('modelSupportsImageInputBadge')}
+        </span>
+      )}
       {isSelected(model) && (
-        <CheckIcon className="h-4 w-4 shrink-0 text-claude-accent" />
+        <CheckIcon className="h-4 w-4 shrink-0 text-emerald-500" />
       )}
     </button>
   );
 
   const renderGroupHeader = (label: string) => (
-    <div className="px-4 py-1.5 text-xs font-medium text-secondary uppercase tracking-wider">
-      {label}
+    <div className="px-2 py-1">
+      <div className="rounded-lg border border-border bg-surface-raised px-2.5 py-1.5 text-[12px] font-semibold leading-4 text-foreground">
+        {label}
+      </div>
     </div>
   );
 
@@ -209,19 +249,19 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     <div
       ref={dropdownRef}
       style={portal ? portalStyle : undefined}
-      className={`${portal ? '' : `absolute ${dropdownPositionClass}`} w-60 bg-surface rounded-xl popover-enter shadow-popover z-50 border-border border overflow-hidden`}
+      className={`${portal ? '' : `absolute ${dropdownPositionClass} ${dropdownAlignmentClass}`} w-60 bg-surface rounded-xl popover-enter shadow-popover z-50 border-border border overflow-hidden`}
     >
-      <div className="max-h-64 overflow-y-auto">
+      <div className="model-selector-scroll max-h-72 overflow-y-auto py-1">
         {defaultLabel && (
           <button
             type="button"
             onClick={() => handleModelSelect(null)}
-            className={`w-full px-4 py-2.5 text-left dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center justify-between transition-colors ${
+            className={`w-full px-3 py-2 text-left dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center justify-between gap-2 transition-colors ${
               !selectedModel ? 'dark:bg-claude-darkSurfaceHover/50 bg-claude-surfaceHover/50' : ''
             }`}
           >
-            <span className="text-sm">{defaultLabel}</span>
-            {!selectedModel && <CheckIcon className="h-4 w-4 text-claude-accent" />}
+            <span className="truncate text-[13px] font-normal leading-5">{defaultLabel}</span>
+            {!selectedModel && <CheckIcon className="h-4 w-4 shrink-0 text-emerald-500" />}
           </button>
         )}
         {hasBothGroups ? (

@@ -411,6 +411,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkModelSettingsAction: '前往模型设置',
     modelGroupServer: '套餐模型',
     modelGroupUser: '自定义模型',
+    modelSupportsImageInputBadge: '可读图',
     modelSelectorNoModels: '请先在设置中配置模型',
     coworkApiConfigTitle: 'API 配置',
     coworkApiConfigHint:
@@ -2171,6 +2172,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkModelSettingsAction: 'Go to Model Settings',
     modelGroupServer: 'Plan Models',
     modelGroupUser: 'Custom Models',
+    modelSupportsImageInputBadge: 'Reads images',
     modelSelectorNoModels: 'Please configure models in settings first',
     coworkApiConfigTitle: 'API Configuration',
     coworkApiConfigHint:
