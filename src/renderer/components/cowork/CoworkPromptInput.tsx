@@ -97,8 +97,8 @@ const SEND_SHORTCUT_OPTIONS = [
 const isMacPlatform = navigator.platform.includes('Mac');
 
 const ContextLabelMaxLength = {
-  Folder: 6,
-  Agent: 6,
+  Folder: 12,
+  Agent: 12,
   DefaultFolder: 30,
 } as const;
 
@@ -1067,7 +1067,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const readOnlyContextRow = isLarge && showReadOnlyContext && !useHomeContextLayout ? (
     <div className="mt-2 grid min-h-7 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-4">
-      <div ref={readOnlyContextGroupRef} className="flex min-w-0 items-center gap-2">
+      <div ref={readOnlyContextGroupRef} className="flex min-w-0 items-center gap-1">
         <button
           type="button"
           onClick={handleOpenWorkingDirectory}
@@ -1077,7 +1077,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           } ${
             isReadOnlyContextCompact
               ? 'w-7 flex-none justify-center'
-              : 'min-w-0 flex-1 gap-1.5 px-2'
+              : 'min-w-0 max-w-[260px] shrink gap-1.5 px-2'
           }`}
           title={workingDirectory || i18nService.t('noFolderSelected')}
           aria-label={i18nService.t('coworkOpenFolder')}
@@ -1093,7 +1093,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           className={`flex h-7 items-center rounded-lg text-[13px] text-secondary ${
             isReadOnlyContextCompact
               ? 'w-7 flex-none justify-center'
-              : 'min-w-0 flex-1 gap-1.5 px-2'
+              : 'min-w-0 max-w-[220px] shrink gap-1.5 px-2'
           }`}
           title={`${i18nService.t('coworkCurrentAgent')}: ${readOnlyContextAgentName}`}
         >

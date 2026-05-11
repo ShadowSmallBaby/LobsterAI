@@ -31,10 +31,15 @@ interface ModelSelectorProps {
   alignDropdownToTriggerEnd?: boolean;
 }
 
-const DROPDOWN_MAX_HEIGHT = 288; // matches max-h-72
+const DROPDOWN_MAX_HEIGHT = 344; // list max-h-72 plus the tab area
 const DROPDOWN_WIDTH = 240; // matches w-60
 const DROPDOWN_VIEWPORT_MARGIN = 8;
 const MODEL_ICON_CLASS_NAME = 'h-[18px] w-[18px]';
+const ModelSelectorGroup = {
+  Server: 'server',
+  User: 'user',
+} as const;
+type ModelSelectorGroup = typeof ModelSelectorGroup[keyof typeof ModelSelectorGroup];
 const MODEL_ICON_PROVIDER_HINTS: Array<{ pattern: RegExp; providerName: ProviderName | ProviderIconId }> = [
   { pattern: /doubao|豆包/i, providerName: ProviderIconId.Doubao },
   { pattern: /deepseek/i, providerName: ProviderName.DeepSeek },
@@ -62,14 +67,45 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const [isOpen, setIsOpen] = React.useState(false);
   const [resolvedDirection, setResolvedDirection] = React.useState<'up' | 'down'>('down');
   const [portalStyle, setPortalStyle] = React.useState<React.CSSProperties>({});
+  const [activeGroup, setActiveGroup] = React.useState<ModelSelectorGroup>(ModelSelectorGroup.Server);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+  const selectedItemRef = React.useRef<HTMLButtonElement>(null);
 
   const controlled = onChange !== undefined;
   const globalSelectedModel = useSelector((state: RootState) => state.model.defaultSelectedModel);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const selectedModel = controlled ? value ?? null : globalSelectedModel;
+  const selectedModelKey = selectedModel ? getModelIdentityKey(selectedModel) : '';
   const availableModels = useSelector((state: RootState) => state.model.availableModels);
+  const serverModels = availableModels.filter(m => m.isServerModel);
+  const userModels = availableModels.filter(m => !m.isServerModel);
+  const modelGroups = [
+    ...(serverModels.length > 0
+      ? [{ key: ModelSelectorGroup.Server, label: i18nService.t('modelGroupServer') }]
+      : []),
+    ...(userModels.length > 0
+      ? [{ key: ModelSelectorGroup.User, label: i18nService.t('modelGroupUser') }]
+      : []),
+  ];
+  const shouldShowGroupTabs = serverModels.length > 0;
+  const isGroupAvailable = (group: ModelSelectorGroup): boolean => (
+    group === ModelSelectorGroup.Server ? serverModels.length > 0 : userModels.length > 0
+  );
+  const getModelGroup = (model: Model | null): ModelSelectorGroup | null => {
+    if (!model) return null;
+    return model.isServerModel ? ModelSelectorGroup.Server : ModelSelectorGroup.User;
+  };
+  const getPreferredGroup = (): ModelSelectorGroup => {
+    const selectedGroup = getModelGroup(selectedModel);
+    if (selectedGroup && isGroupAvailable(selectedGroup)) return selectedGroup;
+    return serverModels.length > 0 ? ModelSelectorGroup.Server : ModelSelectorGroup.User;
+  };
+  const visibleGroup = isGroupAvailable(activeGroup) ? activeGroup : getPreferredGroup();
+  const visibleModels = shouldShowGroupTabs
+    ? (visibleGroup === ModelSelectorGroup.Server ? serverModels : userModels)
+    : availableModels;
 
   // 点击外部区域关闭下拉框
   React.useEffect(() => {
@@ -139,6 +175,21 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     };
   }, [isOpen, portal, resolvedDirection, updatePortalPosition]);
 
+  React.useLayoutEffect(() => {
+    if (!isOpen || !selectedModelKey) return;
+
+    const scrollContainer = scrollContainerRef.current;
+    const selectedItem = selectedItemRef.current;
+    if (!scrollContainer || !selectedItem || !scrollContainer.contains(selectedItem)) return;
+
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const selectedRect = selectedItem.getBoundingClientRect();
+    const selectedOffsetTop = selectedRect.top - containerRect.top + scrollContainer.scrollTop;
+    const targetScrollTop = selectedOffsetTop - ((scrollContainer.clientHeight - selectedItem.offsetHeight) / 2);
+    const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+    scrollContainer.scrollTop = Math.min(Math.max(0, targetScrollTop), maxScrollTop);
+  }, [isOpen, selectedModelKey, visibleGroup, visibleModels.length]);
+
   const toggleOpen = () => {
     if (disabled) return;
     if (!isOpen) {
@@ -147,6 +198,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       if (portal) {
         updatePortalPosition(nextDirection);
       }
+      setActiveGroup(getPreferredGroup());
       setIsOpen(true);
     } else {
       setIsOpen(false);
@@ -176,10 +228,6 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     ? 'bottom-full mb-1'
     : 'top-full mt-1';
   const dropdownAlignmentClass = alignDropdownToTriggerEnd ? 'right-0' : 'left-0';
-
-  const serverModels = availableModels.filter(m => m.isServerModel);
-  const userModels = availableModels.filter(m => !m.isServerModel);
-  const hasBothGroups = serverModels.length > 0 && userModels.length > 0;
 
   const isSelected = (model: Model): boolean => {
     if (!selectedModel) return false;
@@ -211,36 +259,56 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     : 'font-medium text-sm';
   const triggerIconClassName = compact ? 'h-3.5 w-3.5' : 'h-4 w-4';
 
-  const renderModelItem = (model: Model) => (
-    <button
-      type="button"
-      key={getModelIdentityKey(model)}
-      onClick={() => handleModelSelect(model)}
-      className={`w-full px-3 py-2 text-left dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2.5 transition-colors ${
-        isSelected(model) ? 'dark:bg-claude-darkSurfaceHover/50 bg-claude-surfaceHover/50' : ''
-      }`}
-    >
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center text-secondary">
-        {renderProviderIcon(model)}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[13px] font-normal leading-5">
-        {model.name}
-      </span>
-      {model.supportsImage && (
-        <span className="shrink-0 rounded-md bg-surface-raised px-1.5 py-0.5 text-[10px] font-medium leading-none text-secondary">
-          {i18nService.t('modelSupportsImageInputBadge')}
-        </span>
-      )}
-      {isSelected(model) && (
-        <CheckIcon className="h-4 w-4 shrink-0 text-emerald-500" />
-      )}
-    </button>
-  );
+  const renderModelItem = (model: Model) => {
+    const selected = isSelected(model);
 
-  const renderGroupHeader = (label: string) => (
-    <div className="px-2 py-1">
-      <div className="rounded-lg border border-border bg-surface-raised px-2.5 py-1.5 text-[12px] font-semibold leading-4 text-foreground">
-        {label}
+    return (
+      <button
+        ref={selected ? selectedItemRef : undefined}
+        type="button"
+        key={getModelIdentityKey(model)}
+        onClick={() => handleModelSelect(model)}
+        className={`w-full px-3 py-2 text-left dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2.5 transition-colors ${
+          selected ? 'dark:bg-claude-darkSurfaceHover/50 bg-claude-surfaceHover/50' : ''
+        }`}
+      >
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center text-secondary">
+          {renderProviderIcon(model)}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-normal leading-5">
+          {model.name}
+        </span>
+        {model.supportsImage && (
+          <span className="shrink-0 rounded-md bg-surface-raised px-1.5 py-0.5 text-[10px] font-medium leading-none text-secondary">
+            {i18nService.t('modelSupportsImageInputBadge')}
+          </span>
+        )}
+        {selected && (
+          <CheckIcon className="h-4 w-4 shrink-0 text-emerald-500" />
+        )}
+      </button>
+    );
+  };
+
+  const renderGroupTabs = () => (
+    <div className="border-b border-border/60 p-2">
+      <div className="flex rounded-lg bg-surface-raised p-0.5" role="tablist" aria-label={i18nService.t('model')}>
+        {modelGroups.map(group => (
+          <button
+            type="button"
+            key={group.key}
+            role="tab"
+            aria-selected={visibleGroup === group.key}
+            onClick={() => setActiveGroup(group.key)}
+            className={`min-w-0 flex-1 rounded-md px-2 py-1.5 text-center text-[12px] font-medium leading-4 transition-colors ${
+              visibleGroup === group.key
+                ? 'bg-surface text-foreground shadow-sm'
+                : 'text-secondary hover:text-foreground'
+            }`}
+          >
+            <span className="truncate">{group.label}</span>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -251,7 +319,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       style={portal ? portalStyle : undefined}
       className={`${portal ? '' : `absolute ${dropdownPositionClass} ${dropdownAlignmentClass}`} w-60 bg-surface rounded-xl popover-enter shadow-popover z-50 border-border border overflow-hidden`}
     >
-      <div className="model-selector-scroll max-h-72 overflow-y-auto py-1">
+      {shouldShowGroupTabs && renderGroupTabs()}
+      <div ref={scrollContainerRef} className="model-selector-scroll max-h-72 overflow-y-auto py-1">
         {defaultLabel && (
           <button
             type="button"
@@ -264,17 +333,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
             {!selectedModel && <CheckIcon className="h-4 w-4 shrink-0 text-emerald-500" />}
           </button>
         )}
-        {hasBothGroups ? (
-          <>
-            {renderGroupHeader(i18nService.t('modelGroupServer'))}
-            {serverModels.map(renderModelItem)}
-            <div className="my-1 border-t border-border" />
-            {renderGroupHeader(i18nService.t('modelGroupUser'))}
-            {userModels.map(renderModelItem)}
-          </>
-        ) : (
-          availableModels.map(renderModelItem)
-        )}
+        {visibleModels.map(renderModelItem)}
       </div>
     </div>
   ) : null;
