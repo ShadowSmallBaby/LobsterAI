@@ -112,6 +112,10 @@ export interface CoworkConfig {
   embeddingVectorWeight: number;
   embeddingRemoteBaseUrl: string;
   embeddingRemoteApiKey: string;
+  dreamingEnabled: boolean;
+  dreamingFrequency: string;
+  dreamingModel: string;
+  dreamingTimezone: string;
   openClawSessionPolicy: OpenClawSessionPolicyConfig;
 }
 
@@ -133,6 +137,10 @@ export type CoworkConfigUpdate = Partial<Pick<
   | 'embeddingVectorWeight'
   | 'embeddingRemoteBaseUrl'
   | 'embeddingRemoteApiKey'
+  | 'dreamingEnabled'
+  | 'dreamingFrequency'
+  | 'dreamingModel'
+  | 'dreamingTimezone'
 >>;
 
 export interface CoworkApiConfig {

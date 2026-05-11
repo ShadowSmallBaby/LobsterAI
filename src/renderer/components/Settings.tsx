@@ -28,6 +28,7 @@ import type {
 import { OpenClawSessionKeepAlive as OpenClawSessionKeepAliveValues } from '../types/cowork';
 import Modal from './common/Modal';
 import EmbeddingSettingsSection from './cowork/EmbeddingSettingsSection';
+import DreamingSettingsSection from './cowork/DreamingSettingsSection';
 import ErrorMessage from './ErrorMessage';
 import BrainIcon from './icons/BrainIcon';
 import PencilIcon from './icons/PencilIcon';
@@ -858,6 +859,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const [embeddingVectorWeight, setEmbeddingVectorWeight] = useState<number>(coworkConfig.embeddingVectorWeight ?? 0.7);
   const [embeddingRemoteBaseUrl, setEmbeddingRemoteBaseUrl] = useState<string>(coworkConfig.embeddingRemoteBaseUrl ?? '');
   const [embeddingRemoteApiKey, setEmbeddingRemoteApiKey] = useState<string>(coworkConfig.embeddingRemoteApiKey ?? '');
+  const [dreamingEnabled, setDreamingEnabled] = useState<boolean>(coworkConfig.dreamingEnabled ?? false);
+  const [dreamingFrequency, setDreamingFrequency] = useState<string>(coworkConfig.dreamingFrequency ?? '0 3 * * *');
+  const [dreamingModel, setDreamingModel] = useState<string>(coworkConfig.dreamingModel ?? '');
+  const [dreamingTimezone, setDreamingTimezone] = useState<string>(coworkConfig.dreamingTimezone ?? '');
   const [openClawSessionKeepAlive, setOpenClawSessionKeepAlive] = useState<OpenClawSessionKeepAlive>(
     coworkConfig.openClawSessionPolicy?.keepAlive || OpenClawSessionKeepAliveValues.ThirtyDays,
   );
@@ -887,6 +892,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     setEmbeddingVectorWeight(coworkConfig.embeddingVectorWeight ?? 0.7);
     setEmbeddingRemoteBaseUrl(coworkConfig.embeddingRemoteBaseUrl ?? '');
     setEmbeddingRemoteApiKey(coworkConfig.embeddingRemoteApiKey ?? '');
+    setDreamingEnabled(coworkConfig.dreamingEnabled ?? false);
+    setDreamingFrequency(coworkConfig.dreamingFrequency ?? '0 3 * * *');
+    setDreamingModel(coworkConfig.dreamingModel ?? '');
+    setDreamingTimezone(coworkConfig.dreamingTimezone ?? '');
     setOpenClawSessionKeepAlive(coworkConfig.openClawSessionPolicy?.keepAlive || OpenClawSessionKeepAliveValues.ThirtyDays);
   }, [
     coworkConfig.agentEngine,
@@ -901,6 +910,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     coworkConfig.embeddingVectorWeight,
     coworkConfig.embeddingRemoteBaseUrl,
     coworkConfig.embeddingRemoteApiKey,
+    coworkConfig.dreamingEnabled,
+    coworkConfig.dreamingFrequency,
+    coworkConfig.dreamingModel,
+    coworkConfig.dreamingTimezone,
   ]);
 
   useEffect(() => () => {
@@ -1634,7 +1647,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     || embeddingLocalModelPath !== (coworkConfig.embeddingLocalModelPath ?? '')
     || embeddingVectorWeight !== (coworkConfig.embeddingVectorWeight ?? 0.7)
     || embeddingRemoteBaseUrl !== (coworkConfig.embeddingRemoteBaseUrl ?? '')
-    || embeddingRemoteApiKey !== (coworkConfig.embeddingRemoteApiKey ?? '');
+    || embeddingRemoteApiKey !== (coworkConfig.embeddingRemoteApiKey ?? '')
+    || dreamingEnabled !== (coworkConfig.dreamingEnabled ?? false)
+    || dreamingFrequency !== (coworkConfig.dreamingFrequency ?? '0 3 * * *')
+    || dreamingModel !== (coworkConfig.dreamingModel ?? '')
+    || dreamingTimezone !== (coworkConfig.dreamingTimezone ?? '');
   const isOpenClawAgentEngine = coworkAgentEngine === 'openclaw';
 
   const openClawProgressPercent = useMemo(() => {
@@ -1977,6 +1994,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
           embeddingVectorWeight,
           embeddingRemoteBaseUrl,
           embeddingRemoteApiKey,
+          dreamingEnabled,
+          dreamingFrequency,
+          dreamingModel,
+          dreamingTimezone,
         });
         if (!updated) {
           throw new Error(i18nService.t('coworkConfigSaveFailed'));
@@ -3208,6 +3229,18 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
               onEmbeddingVectorWeightChange={setEmbeddingVectorWeight}
               onEmbeddingRemoteBaseUrlChange={setEmbeddingRemoteBaseUrl}
               onEmbeddingRemoteApiKeyChange={setEmbeddingRemoteApiKey}
+            />
+
+            {/* Section 4: Dreaming - Background Memory Consolidation */}
+            <DreamingSettingsSection
+              dreamingEnabled={dreamingEnabled}
+              dreamingFrequency={dreamingFrequency}
+              dreamingModel={dreamingModel}
+              dreamingTimezone={dreamingTimezone}
+              onDreamingEnabledChange={setDreamingEnabled}
+              onDreamingFrequencyChange={setDreamingFrequency}
+              onDreamingModelChange={setDreamingModel}
+              onDreamingTimezoneChange={setDreamingTimezone}
             />
 
           </div>
