@@ -29,6 +29,8 @@ import {
   isSilentReplyPrefixText,
   isSilentReplyText,
   shouldSuppressHeartbeatText,
+  stripTrailingSilentReplyTail,
+  stripTrailingSilentReplyToken,
 } from '../openclawHistory';
 import { buildOpenClawLocalTimeContextPrompt } from '../openclawLocalTimeContextPrompt';
 import { AgentLifecyclePhase, type AgentLifecyclePhase as AgentLifecyclePhaseValue } from './constants';
@@ -614,7 +616,8 @@ const extractCurrentTurnAssistantText = (messages: unknown[]): string => {
     if (!isRecord(msg)) continue;
     const role = typeof msg.role === 'string' ? msg.role.trim().toLowerCase() : '';
     if (role !== 'assistant') continue;
-    const text = extractMessageText(msg).trim();
+    let text = extractMessageText(msg).trim();
+    text = stripTrailingSilentReplyToken(text);
     if (text && !shouldSuppressHeartbeatText('assistant', text)) {
       textParts.push(text);
     }
@@ -3263,7 +3266,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Update turn text state and push to store.
     turn.currentText = text;
-    turn.currentAssistantSegmentText = this.resolveAssistantSegmentText(turn, text);
+    const displayText = stripTrailingSilentReplyTail(text);
+    turn.currentAssistantSegmentText = this.resolveAssistantSegmentText(turn, displayText);
 
     if (!turn.assistantMessageId && turn.currentAssistantSegmentText) {
       // Create a new message for the new text segment (after split).
@@ -3364,7 +3368,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       return;
     }
-    const segmentText = this.resolveAssistantSegmentText(turn, streamedText);
+    const displayStreamedText = stripTrailingSilentReplyTail(streamedText);
+    const segmentText = this.resolveAssistantSegmentText(turn, displayStreamedText);
     if (!segmentText) return;
     if (segmentText === previousSegmentText && streamedText === previousText) return;
 
@@ -3403,7 +3408,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private async handleChatFinal(sessionId: string, turn: ActiveTurn, payload: ChatEventPayload): Promise<void> {
     const previousText = turn.currentText;
     const previousSegmentText = turn.currentAssistantSegmentText;
-    const finalText = this.resolveFinalTurnText(turn, payload.message);
+    const rawFinalText = this.resolveFinalTurnText(turn, payload.message);
+    const finalText = stripTrailingSilentReplyToken(rawFinalText);
     console.debug(
       '[OpenClawRuntime] handleChatFinal:',
       `sessionId=${sessionId}`,
