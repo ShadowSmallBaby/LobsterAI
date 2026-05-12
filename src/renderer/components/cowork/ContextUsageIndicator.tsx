@@ -9,6 +9,7 @@ interface ContextUsageIndicatorProps {
   compacting?: boolean;
   disabled?: boolean;
   onCompact?: () => void;
+  className?: string;
 }
 
 const RADIUS = 8;
@@ -36,6 +37,7 @@ const ContextUsageIndicator: React.FC<ContextUsageIndicatorProps> = ({
   compacting = false,
   disabled = false,
   onCompact,
+  className = '',
 }) => {
   const percent = typeof usage?.percent === 'number' ? usage.percent : undefined;
   if (!compacting && percent === undefined) {
@@ -49,7 +51,7 @@ const ContextUsageIndicator: React.FC<ContextUsageIndicatorProps> = ({
   const tooltipLines = tooltip.split('\n');
 
   return (
-    <span className="group relative inline-flex flex-shrink-0">
+    <span className={`group relative inline-flex flex-shrink-0 ${className}`}>
       <button
         type="button"
         onClick={onCompact}

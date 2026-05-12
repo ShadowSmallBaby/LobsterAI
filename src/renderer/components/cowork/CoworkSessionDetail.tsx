@@ -3079,6 +3079,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 compacting={isContextCompacting}
                 disabled={remoteManaged || !currentSession?.id}
                 onCompact={handleCompactContext}
+                className="-mr-1"
               />
             )}
           />
