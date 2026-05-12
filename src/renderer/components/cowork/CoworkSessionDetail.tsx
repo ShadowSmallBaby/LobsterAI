@@ -2585,6 +2585,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const artifactPanelFrameWidth = isArtifactPanelVisible
     ? Math.max(artifactPanelMinWidth, Math.min(panelWidth, artifactPanelMaxWidth)) + ARTIFACT_PANEL_RESIZE_HANDLE_WIDTH
     : 0;
+  const shouldShowTurnNavigationRail = turns.length > 1 && isScrollable;
 
   const renderConversationTurns = () => {
     let railCounter = 0;
@@ -2770,7 +2771,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         <div
           ref={scrollContainerRef}
           onScroll={handleMessagesScroll}
-          className={`h-full min-h-0 overflow-y-auto pt-3 ${turns.length > 1 && isScrollable ? 'pr-8' : 'pr-3'}`}
+          className="h-full min-h-0 overflow-y-auto pt-3"
+          style={{ scrollbarGutter: 'stable both-edges' }}
         >
           {isLoadingMoreMessages && (
             <div className="py-2 text-center text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
@@ -2782,7 +2784,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         </div>
 
         {/* Turn Navigation Rail — to the left of scrollbar */}
-        {turns.length > 1 && isScrollable && (
+        {shouldShowTurnNavigationRail && (
           <div
             className="absolute right-[18px] top-1/2 -translate-y-1/2 w-5 flex flex-col items-end z-10"
             style={{ maxHeight: 'calc(100% - 40px)' }}
@@ -2993,7 +2995,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       {isStreaming && <StreamingActivityBar messages={currentSession.messages} isContextMaintenance={isContextMaintenance} />}
 
       {/* Input Area */}
-      <div className={`py-4 shrink-0 ${COWORK_DETAIL_GUTTER_CLASS}`}>
+      <div className={`pt-0 pb-4 shrink-0 ${COWORK_DETAIL_GUTTER_CLASS}`}>
         <div className={COWORK_DETAIL_CONTENT_CLASS}>
           <CoworkPromptInput
             ref={promptInputRef}
