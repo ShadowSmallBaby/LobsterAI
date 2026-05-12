@@ -278,6 +278,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const isLarge = size === 'large';
   const useHomeContextLayout = isLarge && showAgentSelector;
+  const useCompactSendButton = isLarge && showReadOnlyContext && !useHomeContextLayout;
   const minHeight = isLarge
     ? useHomeContextLayout
       ? hasActiveSkills ? 36 : 52
@@ -1059,6 +1060,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       />
     </>
   ) : null;
+  const largeSendButtonSizeClass = useCompactSendButton ? 'h-7 w-7' : 'h-8 w-8';
+  const largeSendIconSizeClass = useCompactSendButton ? 'h-4 w-4' : 'h-[18px] w-[18px]';
 
   const largeSendButton = isStreaming ? (
     <button
@@ -1074,7 +1077,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       type="button"
       onClick={handleSubmit}
       disabled={!canSubmit}
-      className={`flex h-8 w-8 items-center justify-center rounded-full transition-all ${
+      className={`flex ${largeSendButtonSizeClass} items-center justify-center rounded-full transition-all ${
         canSubmit
           ? 'bg-neutral-950 text-white shadow-subtle hover:bg-neutral-800 active:scale-95 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200'
           : 'cursor-not-allowed bg-neutral-300 text-white dark:bg-neutral-700 dark:text-neutral-500'
@@ -1082,7 +1085,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       aria-label={i18nService.t('sendMessage')}
       title={sendButtonTitle}
     >
-      <ArrowUpIcon className="h-[18px] w-[18px]" />
+      <ArrowUpIcon className={largeSendIconSizeClass} />
     </button>
   );
 
@@ -1309,8 +1312,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 className={textareaClass}
                 style={{ minHeight: `${minHeight}px` }}
               />
-              <div className="flex items-center justify-between px-4 pb-2 pt-1.5">
-                <div className="flex items-center gap-2 relative">
+              <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-1.5">
+                <div className="flex min-w-0 items-center gap-2 relative">
                   {showFolderSelector && (
                     <>
                       <div className="flex items-center">
@@ -1356,10 +1359,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       )}
                     </>
                   )}
-                  {largeModelSelector}
                   {largeInputActions}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
+                  {largeModelSelector}
                   {largeSendButton}
                 </div>
               </div>
