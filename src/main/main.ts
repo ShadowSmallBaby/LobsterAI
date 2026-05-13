@@ -3931,11 +3931,14 @@ if (!gotTheLock) {
       const { PluginManager } = await import('./libs/pluginManager');
       const manager = new PluginManager(getCoworkStore());
       const sender = event.sender;
-      const result = await manager.installPlugin(params, (line: string) => {
+      const sendLog = (line: string) => {
         try { sender.send('plugins:install-log', line); } catch { /* window closed */ }
-      });
+      };
+      const result = await manager.installPlugin(params, sendLog);
       if (result.ok) {
+        sendLog('Syncing gateway config...\n');
         await syncOpenClawConfig({ reason: 'plugin-install' });
+        sendLog('Gateway config synced.\n');
       }
       return result;
     } catch (error) {

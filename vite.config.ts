@@ -81,6 +81,8 @@ export default defineConfig({
     },
     watch: {
       usePolling: false,
+      // Ignore vendor/ to prevent dev reload when plugins are installed into
+      // vendor/openclaw-runtime/.../third-party-extensions/
       ignored: ['**/vendor/**'],
     },
   },

@@ -232,19 +232,20 @@ export class PluginManager {
       const stagedPluginDir = path.join(stagedExtDir, pluginId);
       const targetPluginDir = path.join(extensionsDir, pluginId);
 
-      // Copy from staging to final extensions directory
+      // Copy from staging to final extensions directory (async to avoid blocking main thread)
       onLog?.(`Copying ${pluginId} to extensions directory...\n`);
       try {
         if (fs.existsSync(targetPluginDir)) {
-          fs.rmSync(targetPluginDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+          await fs.promises.rm(targetPluginDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
         }
       } catch {
         // On Windows the gateway may hold file handles; proceed with force-overwrite
       }
-      fs.cpSync(stagedPluginDir, targetPluginDir, { recursive: true, force: true });
+      await fs.promises.cp(stagedPluginDir, targetPluginDir, { recursive: true, force: true });
+      onLog?.(`Done.\n`);
 
       // Cleanup staging
-      try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* best effort */ }
+      fs.promises.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
 
       const version = readPluginVersion(targetPluginDir) || params.version;
 
@@ -259,6 +260,7 @@ export class PluginManager {
         installedAt: Date.now(),
       });
 
+      onLog?.(`Plugin ${pluginId}@${version || 'unknown'} installed successfully.\n`);
       return { ok: true, pluginId, version };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

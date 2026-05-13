@@ -27,6 +27,7 @@ export default function PluginsSettings() {
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
   const [installLog, setInstallLog] = useState<string>('');
+  const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
   const [form, setForm] = useState<InstallForm>({
     source: 'npm',
@@ -67,11 +68,11 @@ export default function PluginsSettings() {
   };
 
   const handleUninstall = async (pluginId: string) => {
-    if (!confirm(i18nService.t('pluginsUninstallConfirm'))) return;
     const result = await window.electron?.plugins.uninstall(pluginId);
     if (result?.ok) {
       setPlugins(prev => prev.filter(p => p.pluginId !== pluginId));
     }
+    setConfirmUninstall(null);
   };
 
   const handleInstall = async () => {
@@ -133,7 +134,7 @@ export default function PluginsSettings() {
         </div>
         <button
           type="button"
-          onClick={() => setShowInstallModal(true)}
+          onClick={() => { setShowInstallModal(true); setInstallLog(''); setInstallError(null); }}
           className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           <PlusIcon className="h-4 w-4" />
@@ -183,7 +184,7 @@ export default function PluginsSettings() {
                 {plugin.canUninstall && (
                   <button
                     type="button"
-                    onClick={() => handleUninstall(plugin.pluginId)}
+                    onClick={() => setConfirmUninstall(plugin.pluginId)}
                     className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                     title={i18nService.t('pluginsUninstall')}
                   >
@@ -382,6 +383,36 @@ export default function PluginsSettings() {
                 className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {installing ? i18nService.t('pluginsInstalling') : i18nService.t('pluginsInstall')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Uninstall Confirmation Modal */}
+      {confirmUninstall && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background border border-border rounded-xl shadow-lg w-full max-w-sm p-6">
+            <h3 className="text-base font-semibold text-foreground mb-2">
+              {i18nService.t('pluginsUninstallConfirm')}
+            </h3>
+            <p className="text-sm text-muted-foreground mb-5">
+              {confirmUninstall}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmUninstall(null)}
+                className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-raised transition-colors"
+              >
+                {i18nService.t('cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUninstall(confirmUninstall)}
+                className="px-4 py-2 text-sm rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                {i18nService.t('pluginsUninstall')}
               </button>
             </div>
           </div>
