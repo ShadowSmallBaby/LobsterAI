@@ -28,6 +28,7 @@ export default function PluginsSettings() {
   const [installError, setInstallError] = useState<string | null>(null);
   const [installLog, setInstallLog] = useState<string>('');
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
+  const [uninstalling, setUninstalling] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
   const [form, setForm] = useState<InstallForm>({
     source: 'npm',
@@ -68,7 +69,9 @@ export default function PluginsSettings() {
   };
 
   const handleUninstall = async (pluginId: string) => {
+    setUninstalling(true);
     const result = await window.electron?.plugins.uninstall(pluginId);
+    setUninstalling(false);
     if (result?.ok) {
       setPlugins(prev => prev.filter(p => p.pluginId !== pluginId));
     }
@@ -403,16 +406,18 @@ export default function PluginsSettings() {
               <button
                 type="button"
                 onClick={() => setConfirmUninstall(null)}
-                className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-raised transition-colors"
+                disabled={uninstalling}
+                className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-raised transition-colors disabled:opacity-50"
               >
                 {i18nService.t('cancel')}
               </button>
               <button
                 type="button"
                 onClick={() => handleUninstall(confirmUninstall)}
-                className="px-4 py-2 text-sm rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                disabled={uninstalling}
+                className="px-4 py-2 text-sm rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {i18nService.t('pluginsUninstall')}
+                {uninstalling ? i18nService.t('pluginsUninstalling') : i18nService.t('pluginsUninstall')}
               </button>
             </div>
           </div>

@@ -277,7 +277,7 @@ export class PluginManager {
     const pluginDir = path.join(extensionsDir, pluginId);
     try {
       if (fs.existsSync(pluginDir)) {
-        fs.rmSync(pluginDir, { recursive: true, force: true });
+        await fs.promises.rm(pluginDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
