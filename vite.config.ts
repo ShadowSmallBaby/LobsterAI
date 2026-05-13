@@ -81,6 +81,7 @@ export default defineConfig({
     },
     watch: {
       usePolling: false,
+      ignored: ['**/vendor/**'],
     },
   },
   optimizeDeps: {

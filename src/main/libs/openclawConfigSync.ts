@@ -953,6 +953,7 @@ type OpenClawConfigSyncDeps = {
   getMcpBridgeSecret?: () => string;
   getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
   getAgents?: () => Agent[];
+  getUserPlugins?: () => Array<{ pluginId: string; enabled: boolean }>;
 };
 
 export class OpenClawConfigSync {
@@ -976,6 +977,7 @@ export class OpenClawConfigSync {
   private readonly getMcpBridgeSecret?: () => string;
   private readonly getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
   private readonly getAgents?: () => Agent[];
+  private readonly getUserPlugins: () => Array<{ pluginId: string; enabled: boolean }>;
   private previousBindingsJson?: string;
   private currentBindingsObj: { bindings?: Array<Record<string, unknown>> } = {};
 
@@ -1000,6 +1002,7 @@ export class OpenClawConfigSync {
     this.getMcpBridgeSecret = deps.getMcpBridgeSecret;
     this.getSkillsList = deps.getSkillsList;
     this.getAgents = deps.getAgents;
+    this.getUserPlugins = deps.getUserPlugins ?? (() => []);
   }
 
   /**
@@ -1415,6 +1418,10 @@ export class OpenClawConfigSync {
           // Qwen/DashScope URLs. Declare it only when the plugin actually
           // exists, otherwise it becomes a stale entry on every startup.
           ...(hasQwenProvider && qwenPortalAuthPluginId ? { [qwenPortalAuthPluginId]: { enabled: true } } : {}),
+          // User-installed plugins: merge enabled state from user_plugins table
+          ...Object.fromEntries(
+            this.getUserPlugins().map(p => [p.pluginId, { enabled: p.enabled }]),
+          ),
           // Disable acpx (ACP agent runtime) — LobsterAI does not use ACP and
           // the embedded probe adds ~11s to gateway startup while it waits for
           // a process that always fails.  See openclaw/openclaw#62588.

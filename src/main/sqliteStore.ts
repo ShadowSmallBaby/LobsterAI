@@ -196,6 +196,19 @@ export class SqliteStore {
       );
     `);
 
+    // Create user plugins table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS user_plugins (
+        plugin_id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        spec TEXT NOT NULL,
+        registry TEXT,
+        version TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        installed_at INTEGER NOT NULL
+      );
+    `);
+
     // Migrations - safely add columns if they don't exist
     try {
       // Check if execution_mode column exists

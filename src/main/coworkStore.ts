@@ -533,6 +533,18 @@ CoworkConfig,
   | 'dreamingTimezone'
 >>;
 
+export type PluginSource = 'npm' | 'clawhub' | 'git' | 'local';
+
+export interface UserInstalledPlugin {
+  pluginId: string;
+  source: PluginSource;
+  spec: string;
+  registry?: string;
+  version?: string;
+  enabled: boolean;
+  installedAt: number;
+}
+
 
 let cachedDefaultSystemPrompt: string | null = null;
 
@@ -2220,5 +2232,83 @@ export class CoworkStore {
       'SELECT MAX(pin_order) as max_order FROM agents WHERE pinned = 1',
     );
     return (row?.max_order ?? 0) + 1;
+  }
+
+  // ─── User Plugins ───────────────────────────────────────────────────
+
+  listUserPlugins(): UserInstalledPlugin[] {
+    const rows = this.getAll<{
+      plugin_id: string;
+      source: string;
+      spec: string;
+      registry: string | null;
+      version: string | null;
+      enabled: number;
+      installed_at: number;
+    }>('SELECT * FROM user_plugins ORDER BY installed_at ASC');
+
+    return rows.map(row => ({
+      pluginId: row.plugin_id,
+      source: row.source as PluginSource,
+      spec: row.spec,
+      registry: row.registry || undefined,
+      version: row.version || undefined,
+      enabled: Boolean(row.enabled),
+      installedAt: row.installed_at,
+    }));
+  }
+
+  addUserPlugin(plugin: UserInstalledPlugin): void {
+    this.db.prepare(
+      `INSERT INTO user_plugins (plugin_id, source, spec, registry, version, enabled, installed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(plugin_id) DO UPDATE SET
+         source = excluded.source,
+         spec = excluded.spec,
+         registry = excluded.registry,
+         version = excluded.version,
+         enabled = excluded.enabled,
+         installed_at = excluded.installed_at`,
+    ).run(
+      plugin.pluginId,
+      plugin.source,
+      plugin.spec,
+      plugin.registry || null,
+      plugin.version || null,
+      plugin.enabled ? 1 : 0,
+      plugin.installedAt,
+    );
+  }
+
+  removeUserPlugin(pluginId: string): void {
+    this.db.prepare('DELETE FROM user_plugins WHERE plugin_id = ?').run(pluginId);
+  }
+
+  setUserPluginEnabled(pluginId: string, enabled: boolean): void {
+    this.db.prepare('UPDATE user_plugins SET enabled = ? WHERE plugin_id = ?')
+      .run(enabled ? 1 : 0, pluginId);
+  }
+
+  getUserPlugin(pluginId: string): UserInstalledPlugin | undefined {
+    const row = this.getOne<{
+      plugin_id: string;
+      source: string;
+      spec: string;
+      registry: string | null;
+      version: string | null;
+      enabled: number;
+      installed_at: number;
+    }>('SELECT * FROM user_plugins WHERE plugin_id = ?', [pluginId]);
+
+    if (!row) return undefined;
+    return {
+      pluginId: row.plugin_id,
+      source: row.source as PluginSource,
+      spec: row.spec,
+      registry: row.registry || undefined,
+      version: row.version || undefined,
+      enabled: Boolean(row.enabled),
+      installedAt: row.installed_at,
+    };
   }
 }

@@ -420,6 +420,23 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener(AppUpdateIpc.StateChanged, handler);
     },
   },
+  plugins: {
+    list: () => ipcRenderer.invoke('plugins:list'),
+    install: (params: {
+      source: 'npm' | 'clawhub' | 'git' | 'local';
+      spec: string;
+      registry?: string;
+      version?: string;
+    }) => ipcRenderer.invoke('plugins:install', params),
+    uninstall: (pluginId: string) => ipcRenderer.invoke('plugins:uninstall', pluginId),
+    setEnabled: (pluginId: string, enabled: boolean) =>
+      ipcRenderer.invoke('plugins:set-enabled', pluginId, enabled),
+    onInstallLog: (callback: (line: string) => void) => {
+      const handler = (_event: any, line: string) => callback(line);
+      ipcRenderer.on('plugins:install-log', handler);
+      return () => ipcRenderer.removeListener('plugins:install-log', handler);
+    },
+  },
   log: {
     getPath: () => ipcRenderer.invoke('log:getPath'),
     openFolder: () => ipcRenderer.invoke('log:openFolder'),
