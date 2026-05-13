@@ -15,7 +15,7 @@ interface ContextUsageIndicatorProps {
 const RADIUS = 8;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-const formatTooltip = (usage?: CoworkContextUsage): string => {
+const formatTooltip = (usage: CoworkContextUsage | undefined, showActionHint: boolean): string => {
   if (!usage || typeof usage.percent !== 'number') {
     return i18nService.t('coworkContextUsageUnknown');
   }
@@ -28,6 +28,9 @@ const formatTooltip = (usage?: CoworkContextUsage): string => {
         .replace('{used}', formatTokenCount(usage.usedTokens))
         .replace('{total}', formatTokenCount(usage.contextTokens)),
     );
+  }
+  if (showActionHint) {
+    lines.push(i18nService.t('coworkContextUsageCompactHint'));
   }
   return lines.join('\n');
 };
@@ -47,7 +50,7 @@ const ContextUsageIndicator: React.FC<ContextUsageIndicatorProps> = ({
     ? CIRCUMFERENCE
     : CIRCUMFERENCE * (1 - Math.min(Math.max(percent, 0), 100) / 100);
   const isDisabled = disabled || compacting || !onCompact;
-  const tooltip = compacting ? i18nService.t('coworkContextCompacting') : formatTooltip(usage);
+  const tooltip = compacting ? i18nService.t('coworkContextCompacting') : formatTooltip(usage, !isDisabled);
   const tooltipLines = tooltip.split('\n');
 
   return (
@@ -91,10 +94,12 @@ const ContextUsageIndicator: React.FC<ContextUsageIndicatorProps> = ({
           />
         </svg>
       </button>
-      <span className="pointer-events-none absolute bottom-full right-0 z-50 mb-2 hidden min-w-max max-w-[260px] whitespace-nowrap rounded-md border border-border bg-surface-raised px-2 py-1.5 text-left text-xs leading-5 text-foreground shadow-elevated group-hover:block">
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden min-w-max max-w-[min(260px,calc(100vw-24px))] -translate-x-1/2 whitespace-nowrap rounded-xl border border-border bg-surface px-3 py-2 text-left text-[12px] leading-5 text-foreground shadow-popover group-hover:block">
         {tooltipLines.map((line, index) => (
           <React.Fragment key={`${line}-${index}`}>
-            {line}
+            <span className={index === tooltipLines.length - 1 && !isDisabled && !compacting ? 'text-secondary' : undefined}>
+              {line}
+            </span>
             {index < tooltipLines.length - 1 && <br />}
           </React.Fragment>
         ))}
