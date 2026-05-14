@@ -249,6 +249,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:list', options),
     getSessionMessages: (options: { sessionId: string; limit?: number; offset?: number }) =>
       ipcRenderer.invoke('cowork:session:getMessages', options),
+    getContextUsage: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:contextUsage', sessionId),
+    compactContext: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:compactContext', sessionId),
     exportResultImage: (options: { rect: { x: number; y: number; width: number; height: number }; defaultFileName?: string }) =>
       ipcRenderer.invoke('cowork:session:exportResultImage', options),
     captureImageChunk: (options: { rect: { x: number; y: number; width: number; height: number } }) =>
@@ -321,6 +325,21 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:stream:messageUpdate', handler);
       return () => ipcRenderer.removeListener('cowork:stream:messageUpdate', handler);
     },
+    onStreamSessionStatus: (callback: (data: { sessionId: string; status: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; status: string }) => callback(data);
+      ipcRenderer.on('cowork:stream:sessionStatus', handler);
+      return () => ipcRenderer.removeListener('cowork:stream:sessionStatus', handler);
+    },
+    onStreamContextUsage: (callback: (data: { sessionId: string; usage: any }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; usage: any }) => callback(data);
+      ipcRenderer.on('cowork:stream:contextUsage', handler);
+      return () => ipcRenderer.removeListener('cowork:stream:contextUsage', handler);
+    },
+    onStreamContextMaintenance: (callback: (data: { sessionId: string; active: boolean }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; active: boolean }) => callback(data);
+      ipcRenderer.on('cowork:stream:contextMaintenance', handler);
+      return () => ipcRenderer.removeListener('cowork:stream:contextMaintenance', handler);
+    },
     onStreamPermission: (callback: (data: { sessionId: string; request: any }) => void) => {
       const handler = (_event: any, data: { sessionId: string; request: any }) => callback(data);
       ipcRenderer.on('cowork:stream:permission', handler);
@@ -378,6 +397,8 @@ contextBridge.exposeInMainWorld('electron', {
     showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
     openHtmlInBrowser: (htmlContent: string) => ipcRenderer.invoke('shell:openHtmlInBrowser', htmlContent),
+    getAppsForFile: (filePath: string) => ipcRenderer.invoke('shell:getAppsForFile', filePath),
+    openPathWithApp: (filePath: string, appPath: string) => ipcRenderer.invoke('shell:openPathWithApp', filePath, appPath),
   },
   clipboard: {
     writeImageFromFile: (filePath: string) =>
@@ -418,6 +439,27 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on(AppUpdateIpc.StateChanged, handler);
       return () => ipcRenderer.removeListener(AppUpdateIpc.StateChanged, handler);
+    },
+  },
+  plugins: {
+    list: () => ipcRenderer.invoke('plugins:list'),
+    install: (params: {
+      source: 'npm' | 'clawhub' | 'git' | 'local';
+      spec: string;
+      registry?: string;
+      version?: string;
+    }) => ipcRenderer.invoke('plugins:install', params),
+    uninstall: (pluginId: string) => ipcRenderer.invoke('plugins:uninstall', pluginId),
+    setEnabled: (pluginId: string, enabled: boolean) =>
+      ipcRenderer.invoke('plugins:set-enabled', pluginId, enabled),
+    getConfigSchema: (pluginId: string) =>
+      ipcRenderer.invoke('plugins:get-config-schema', pluginId),
+    saveConfig: (pluginId: string, config: Record<string, unknown>) =>
+      ipcRenderer.invoke('plugins:save-config', pluginId, config),
+    onInstallLog: (callback: (line: string) => void) => {
+      const handler = (_event: any, line: string) => callback(line);
+      ipcRenderer.on('plugins:install-log', handler);
+      return () => ipcRenderer.removeListener('plugins:install-log', handler);
     },
   },
   log: {

@@ -1169,6 +1169,7 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
       },
       getMcpBridgeSecret: () => mcpBridgeSecret,
       getAgents: () => getCoworkStore().listAgents(),
+      getUserPlugins: () => getCoworkStore().listUserPlugins().map(p => ({ pluginId: p.pluginId, enabled: p.enabled, config: p.config })),
     });
   }
   return openClawConfigSync;
@@ -1373,6 +1374,43 @@ const bindCoworkRuntimeForwarder = (): void => {
         win.webContents.send('cowork:stream:messageUpdate', { sessionId, messageId, content: safeContent, metadata });
       } catch (error) {
         console.error('Failed to forward cowork message update:', error);
+      }
+    });
+  });
+
+  runtime.on('sessionStatus', (sessionId: string, status: string) => {
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach((win) => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send('cowork:stream:sessionStatus', { sessionId, status });
+      } catch (error) {
+        console.error('[CoworkRuntime] failed to forward session status:', error);
+      }
+    });
+  });
+
+  runtime.on('contextUsageUpdate', (sessionId: string, usage: unknown) => {
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach((win) => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send('cowork:stream:contextUsage', { sessionId, usage });
+      } catch (error) {
+        console.error('[CoworkRuntime] failed to forward context usage:', error);
+      }
+    });
+  });
+
+  runtime.on('contextMaintenance', (sessionId: string, active: boolean) => {
+    const windows = BrowserWindow.getAllWindows();
+    console.log(`[CoworkRuntime] forwarding context maintenance ${active ? 'start' : 'end'} for session ${sessionId} to ${windows.length} windows.`);
+    windows.forEach((win) => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send('cowork:stream:contextMaintenance', { sessionId, active });
+      } catch (error) {
+        console.error('[CoworkRuntime] failed to forward context maintenance status:', error);
       }
     });
   });
@@ -3245,6 +3283,31 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
+    try {
+      const usage = await getCoworkEngineRouter().getContextUsage(sessionId);
+      return { success: true, usage };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get context usage',
+      };
+    }
+  });
+
+  ipcMain.handle('cowork:session:compactContext', async (_event, sessionId: string) => {
+    try {
+      const result = await getCoworkEngineRouter().compactContext(sessionId);
+      return { success: true, ...result };
+    } catch (error) {
+      console.warn(`[CoworkIPC] manual context compaction failed for session ${sessionId}:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to compact context',
+      };
+    }
+  });
+
   // ========== Agent IPC Handlers ==========
 
   ipcMain.handle(AgentIpcChannel.List, async () => {
@@ -3957,6 +4020,93 @@ if (!gotTheLock) {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to set config',
       };
+    }
+  });
+
+  // ==================== Plugin Management IPC Handlers ====================
+
+  ipcMain.handle('plugins:list', async () => {
+    try {
+      const { PluginManager } = await import('./libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      return { success: true, plugins: await manager.listPlugins() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to list plugins' };
+    }
+  });
+
+  ipcMain.handle('plugins:install', async (event, params: {
+    source: 'npm' | 'clawhub' | 'git' | 'local';
+    spec: string;
+    registry?: string;
+    version?: string;
+  }) => {
+    try {
+      const { PluginManager } = await import('./libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      const sender = event.sender;
+      const sendLog = (line: string) => {
+        try { sender.send('plugins:install-log', line); } catch { /* window closed */ }
+      };
+      const result = await manager.installPlugin(params, sendLog);
+      if (result.ok) {
+        sendLog('Syncing gateway config...\n');
+        await syncOpenClawConfig({ reason: 'plugin-install' });
+        sendLog('Gateway config synced.\n');
+      }
+      return result;
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Failed to install plugin' };
+    }
+  });
+
+  ipcMain.handle('plugins:uninstall', async (_event, pluginId: string) => {
+    try {
+      const { PluginManager } = await import('./libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      const result = await manager.uninstallPlugin(pluginId);
+      if (result.ok) {
+        await syncOpenClawConfig({ reason: 'plugin-uninstall' });
+      }
+      return result;
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Failed to uninstall plugin' };
+    }
+  });
+
+  ipcMain.handle('plugins:set-enabled', async (_event, pluginId: string, enabled: boolean) => {
+    try {
+      const { PluginManager } = await import('./libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      manager.setPluginEnabled(pluginId, enabled);
+      await syncOpenClawConfig({ reason: 'plugin-toggle' });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Failed to toggle plugin' };
+    }
+  });
+
+  ipcMain.handle('plugins:get-config-schema', async (_event, pluginId: string) => {
+    try {
+      const { PluginManager } = await import('./libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      const schema = manager.getPluginConfigSchema(pluginId);
+      const config = manager.getPluginConfig(pluginId);
+      return { success: true, schema, config };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get config schema' };
+    }
+  });
+
+  ipcMain.handle('plugins:save-config', async (_event, pluginId: string, config: Record<string, unknown>) => {
+    try {
+      const { PluginManager } = await import('./libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      manager.savePluginConfig(pluginId, config);
+      await syncOpenClawConfig({ reason: 'plugin-config' });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Failed to save plugin config' };
     }
   });
 
@@ -5119,7 +5269,7 @@ if (!gotTheLock) {
   );
 
   // Read a local file as a data URL (data:<mime>;base64,...)
-  const MAX_READ_AS_DATA_URL_BYTES = 20 * 1024 * 1024;
+  const MAX_READ_AS_DATA_URL_BYTES = 100 * 1024 * 1024;
   const MIME_BY_EXT: Record<string, string> = {
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
@@ -5243,6 +5393,26 @@ if (!gotTheLock) {
       const tmpFile = path.join(tmpDir, `preview-${Date.now()}.html`);
       fs.writeFileSync(tmpFile, htmlContent, 'utf-8');
       await shell.openPath(tmpFile);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  ipcMain.handle('shell:getAppsForFile', async (_event, filePath: string) => {
+    try {
+      const { getAppsForFile } = await import('./shellApps');
+      const apps = await getAppsForFile(filePath);
+      return { success: true, apps };
+    } catch (error) {
+      return { success: false, apps: [], error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  ipcMain.handle('shell:openPathWithApp', async (_event, filePath: string, appPath: string) => {
+    try {
+      const { openFileWithApp } = await import('./shellApps');
+      await openFileWithApp(filePath, appPath);
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
