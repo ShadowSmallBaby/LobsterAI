@@ -52,7 +52,7 @@ import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { getCoworkLogPath } from './libs/coworkLogger';
 import { registerProxyTokenRefresher, startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy } from './libs/coworkOpenAICompatProxy';
 import { createPreviewSession, destroyPreviewSession, isPreviewServerUrl, stopHtmlPreviewServer } from './libs/htmlPreviewServer';
-import { generateSessionTitle, probeCoworkModelReadiness } from './libs/coworkUtil';
+import { generateSessionTitle, getElectronNodeRuntimePath, probeCoworkModelReadiness } from './libs/coworkUtil';
 import { getServerApiBaseUrl, getSkillStoreUrl, refreshEndpointsTestMode } from './libs/endpoints';
 import { mergeEnterpriseOpenclawConfig, resolveEnterpriseConfigPath, syncEnterpriseConfig } from './libs/enterpriseConfigSync';
 import { exportLogsZip } from './libs/logExport';
@@ -1575,15 +1575,31 @@ const startAskUserServer = async (): Promise<void> => {
 const getResolvedMcpServers = async (): Promise<ResolvedMcpServer[]> => {
   const enabledServers = getMcpStore().getEnabledServers();
   const resolved: ResolvedMcpServer[] = [];
+
+  // The MCP SDK's StdioClientTransport only inherits a limited set of env vars
+  // (PATH, APPDATA, TEMP, etc.). Our node/npx shims in PATH need these vars.
+  // Inject them into each stdio server's env so they're passed through.
+  const electronPath = getElectronNodeRuntimePath();
+  const npmBinDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin')
+    : '';
+
   for (const server of enabledServers) {
     if (server.transportType === 'stdio') {
       const r = await resolveStdioCommand(server);
+      // Merge gateway env vars needed by shims as fallback
+      const shimEnv: Record<string, string> = {
+        LOBSTERAI_ELECTRON_PATH: electronPath,
+      };
+      if (npmBinDir) {
+        shimEnv.LOBSTERAI_NPM_BIN_DIR = npmBinDir;
+      }
       resolved.push({
         name: server.name,
         transportType: 'stdio',
         command: r.command,
         args: r.args,
-        env: r.env,
+        env: { ...shimEnv, ...(r.env || {}) },
       });
     } else {
       resolved.push({

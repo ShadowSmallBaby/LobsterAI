@@ -151,7 +151,12 @@ export async function resolveStdioCommand(server: McpServerRecord): Promise<Reso
 
   const electronNodeRuntimePath = getElectronNodeRuntimePath();
 
-  if (process.platform === 'win32' && app.isPackaged && effectiveCommand) {
+  // Resolve node/npx/npm commands on Windows (both dev and packaged mode).
+  // The MCP SDK's StdioClientTransport only inherits a limited set of env vars
+  // (PATH, APPDATA, TEMP, etc.) — our node shims in PATH need LOBSTERAI_ELECTRON_PATH
+  // and LOBSTERAI_NPM_BIN_DIR which won't be inherited. Pre-resolving to absolute
+  // paths avoids depending on shims entirely.
+  if (process.platform === 'win32' && effectiveCommand) {
     const normalized = effectiveCommand.trim().toLowerCase();
     const nodeCommandType = isNodeCommand(normalized);
 
@@ -163,7 +168,15 @@ export async function resolveStdioCommand(server: McpServerRecord): Promise<Reso
           log('INFO', `"${server.name}": using system Node.js "${systemNode}" (preferred over Electron runtime)`);
         } else {
           const enhancedEnv = await getEnhancedEnv();
-          const npmBinDir = enhancedEnv.LOBSTERAI_NPM_BIN_DIR;
+          let npmBinDir = enhancedEnv.LOBSTERAI_NPM_BIN_DIR;
+          // In dev mode, the packaged npmBinDir may not exist.
+          // Fall back to the npm bin dir relative to system Node.js.
+          if (!npmBinDir || !fs.existsSync(npmBinDir)) {
+            const systemNpmBin = path.join(path.dirname(systemNode), 'node_modules', 'npm', 'bin');
+            if (fs.existsSync(systemNpmBin)) {
+              npmBinDir = systemNpmBin;
+            }
+          }
           const cliJs = nodeCommandType === 'npx'
             ? (npmBinDir ? path.join(npmBinDir, 'npx-cli.js') : '')
             : (npmBinDir ? path.join(npmBinDir, 'npm-cli.js') : '');
@@ -172,11 +185,19 @@ export async function resolveStdioCommand(server: McpServerRecord): Promise<Reso
             effectiveArgs = [cliJs, ...stdioArgs];
             log('INFO', `"${server.name}": using system Node.js "${systemNode}" + ${nodeCommandType}-cli.js (preferred over Electron runtime)`);
           } else {
-            effectiveCommand = stdioCommand;
-            log('INFO', `"${server.name}": using system "${stdioCommand}" directly`);
+            // npx-cli.js not found; use the system npx/npm executable directly
+            // (cross-spawn handles .cmd files on Windows)
+            const systemBinCmd = path.join(path.dirname(systemNode), `${nodeCommandType}.cmd`);
+            if (fs.existsSync(systemBinCmd)) {
+              effectiveCommand = systemBinCmd;
+              effectiveArgs = [...stdioArgs];
+              log('INFO', `"${server.name}": using system "${systemBinCmd}" directly`);
+            } else {
+              log('INFO', `"${server.name}": keeping raw "${stdioCommand}" (system fallback not found)`);
+            }
           }
         }
-      } else {
+      } else if (app.isPackaged) {
         const enhancedEnv = await getEnhancedEnv();
         const npmBinDir = enhancedEnv.LOBSTERAI_NPM_BIN_DIR;
         const npxCliJs = npmBinDir ? path.join(npmBinDir, 'npx-cli.js') : '';
