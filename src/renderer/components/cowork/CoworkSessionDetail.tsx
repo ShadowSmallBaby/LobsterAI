@@ -1847,15 +1847,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         }
 
         if (msg.type === 'tool_result' && msg.content) {
-          const pathArtifacts = parseFilePathsFromText(msg.content, msg.id, sessionId, 'artifact-toolresult');
-          for (const pa of pathArtifacts) {
-            const normalized = pa.filePath ? normalizeFilePathForDedup(pa.filePath) : '';
-            if (pa.filePath && !seenFilePaths.has(normalized)) {
-              seenFilePaths.add(normalized);
-              detected.push(pa);
-            }
-          }
-
           const mediaArtifacts = parseMediaTokensFromText(msg.content, msg.id, sessionId);
           for (const ma of mediaArtifacts) {
             const normalized = ma.filePath ? normalizeFilePathForDedup(ma.filePath) : '';
