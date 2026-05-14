@@ -320,7 +320,7 @@ foreach ($entry in $apps.Keys) {
     $displayName = [System.IO.Path]::GetFileNameWithoutExtension($exePath)
   }
 
-  if ($exePath) {
+  if ($exePath -and (Test-Path $exePath)) {
     $result += @{ name = $displayName; path = $exePath; isDefault = ($progId -eq $defaultProgId -or $entry -eq $defaultProgId) }
   }
 }
