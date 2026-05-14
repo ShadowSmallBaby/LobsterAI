@@ -1379,6 +1379,43 @@ const bindCoworkRuntimeForwarder = (): void => {
     });
   });
 
+  runtime.on('sessionStatus', (sessionId: string, status: string) => {
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach((win) => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send('cowork:stream:sessionStatus', { sessionId, status });
+      } catch (error) {
+        console.error('[CoworkRuntime] failed to forward session status:', error);
+      }
+    });
+  });
+
+  runtime.on('contextUsageUpdate', (sessionId: string, usage: unknown) => {
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach((win) => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send('cowork:stream:contextUsage', { sessionId, usage });
+      } catch (error) {
+        console.error('[CoworkRuntime] failed to forward context usage:', error);
+      }
+    });
+  });
+
+  runtime.on('contextMaintenance', (sessionId: string, active: boolean) => {
+    const windows = BrowserWindow.getAllWindows();
+    console.log(`[CoworkRuntime] forwarding context maintenance ${active ? 'start' : 'end'} for session ${sessionId} to ${windows.length} windows.`);
+    windows.forEach((win) => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send('cowork:stream:contextMaintenance', { sessionId, active });
+      } catch (error) {
+        console.error('[CoworkRuntime] failed to forward context maintenance status:', error);
+      }
+    });
+  });
+
   runtime.on('permissionRequest', (sessionId: string, request: unknown) => {
     if (runtime.getSessionConfirmationMode(sessionId) === 'text') {
       return;
@@ -1822,6 +1859,46 @@ const getIMGatewayManager = () => {
     });
   }
   return imGatewayManager;
+};
+
+const refreshImSessionWorkingDirectoriesForAgent = (agentId: string): number => {
+  const normalizedAgentId = agentId.trim() || AgentId.Main;
+  const resolvedCwd = resolveAgentDefaultWorkingDirectory(normalizedAgentId);
+  if (!resolvedCwd) {
+    return 0;
+  }
+
+  try {
+    const imStore = getIMGatewayManager().getIMStore();
+    const coworkStore = getCoworkStore();
+    let updatedCount = 0;
+
+    for (const mapping of imStore.listSessionMappings()) {
+      if ((mapping.agentId || AgentId.Main) !== normalizedAgentId) {
+        continue;
+      }
+
+      const session = coworkStore.getSession(mapping.coworkSessionId);
+      if (!session || session.cwd === resolvedCwd) {
+        continue;
+      }
+
+      coworkStore.updateSession(session.id, { cwd: resolvedCwd }, { touchUpdatedAt: false });
+      updatedCount += 1;
+    }
+
+    if (updatedCount > 0) {
+      console.debug(
+        `[ChannelSessionSync] refreshed ${updatedCount} IM session working directories for agent ${normalizedAgentId} to ${resolvedCwd}`,
+      );
+    }
+
+    openClawRuntimeAdapter?.clearChannelSessionCache();
+    return updatedCount;
+  } catch (error) {
+    console.warn('[ChannelSessionSync] failed to refresh IM session working directories:', error);
+    return 0;
+  }
 };
 
 function mergeCoworkSystemPrompt(
@@ -3140,7 +3217,7 @@ if (!gotTheLock) {
         return { success: false, error: 'Title is required' };
       }
       const coworkStoreInstance = getCoworkStore();
-      coworkStoreInstance.updateSession(options.sessionId, { title });
+      coworkStoreInstance.updateSession(options.sessionId, { title }, { touchUpdatedAt: false });
       return { success: true };
     } catch (error) {
       return {
@@ -3207,6 +3284,31 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
+    try {
+      const usage = await getCoworkEngineRouter().getContextUsage(sessionId);
+      return { success: true, usage };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get context usage',
+      };
+    }
+  });
+
+  ipcMain.handle('cowork:session:compactContext', async (_event, sessionId: string) => {
+    try {
+      const result = await getCoworkEngineRouter().compactContext(sessionId);
+      return { success: true, ...result };
+    } catch (error) {
+      console.warn(`[CoworkIPC] manual context compaction failed for session ${sessionId}:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to compact context',
+      };
+    }
+  });
+
   // ========== Agent IPC Handlers ==========
 
   ipcMain.handle(AgentIpcChannel.List, async () => {
@@ -3243,11 +3345,23 @@ if (!gotTheLock) {
 
   ipcMain.handle(AgentIpcChannel.Update, async (_event, id: string, updates: import('./coworkStore').UpdateAgentRequest) => {
     try {
+      const previousAgent = getAgentManager().getAgent(id);
+      const previousWorkingDirectory = previousAgent?.workingDirectory?.trim() || '';
+      const nextWorkingDirectory = updates.workingDirectory?.trim() || '';
+      const workingDirectoryChanged = updates.workingDirectory !== undefined
+        && previousAgent !== null
+        && previousWorkingDirectory !== nextWorkingDirectory;
       const agent = getAgentManager().updateAgent(id, updates);
+      if (workingDirectoryChanged && agent) {
+        refreshImSessionWorkingDirectoriesForAgent(agent.id);
+      }
       const shouldSyncOpenClawConfig = Object.keys(updates).some((key) => key !== 'pinned');
       if (shouldSyncOpenClawConfig) {
-        syncOpenClawConfig({ reason: 'agent-updated' }).catch((err) => {
-          console.error('[OpenClaw] config sync after agent-updated failed:', err);
+        syncOpenClawConfig({
+          reason: workingDirectoryChanged ? 'agent-working-directory-updated' : 'agent-updated',
+          restartGatewayIfRunning: workingDirectoryChanged,
+        }).catch((err) => {
+          console.error('[OpenClaw] config sync after agent update failed:', err);
         });
       }
       return { success: true, agent };

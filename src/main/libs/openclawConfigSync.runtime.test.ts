@@ -241,6 +241,76 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.agents.defaults.cwd).toBe(path.resolve(tmpDir));
   });
 
+  test('uses the main agent working directory for default agent cwd', async () => {
+    const { OpenClawConfigSync } = await import('./openclawConfigSync');
+    const legacyWorkingDirectory = path.join(tmpDir, 'legacy-working-directory');
+    const mainAgentWorkingDirectory = path.join(tmpDir, 'main-agent-working-directory');
+
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getGatewayToken: () => 'gateway-token',
+        getStateDir: () => stateDir,
+        getBaseDir: () => tmpDir,
+      } as never,
+      getCoworkConfig: () => ({
+        workingDirectory: legacyWorkingDirectory,
+        systemPrompt: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        memoryEnabled: false,
+        memoryImplicitUpdateEnabled: false,
+        memoryLlmJudgeEnabled: false,
+        memoryGuardLevel: 'balanced',
+        memoryUserMemoriesMaxItems: 100,
+        skipMissedJobs: false,
+      }),
+      isEnterprise: () => false,
+      getTelegramInstances: () => [],
+      getDiscordOpenClawConfig: () => null,
+      getDingTalkInstances: () => [],
+      getFeishuInstances: () => [],
+      getQQInstances: () => [],
+      getWecomConfig: () => null,
+      getWecomInstances: () => [],
+      getPopoInstances: () => [],
+      getNimConfig: () => null,
+      getNeteaseBeeChanConfig: () => null,
+      getWeixinConfig: () => null,
+      getIMSettings: () => null,
+      getSkillsList: () => [],
+      getAgents: () => [
+        {
+          id: 'main',
+          name: 'Main',
+          description: '',
+          systemPrompt: '',
+          identity: '',
+          model: '',
+          workingDirectory: mainAgentWorkingDirectory,
+          icon: '',
+          skillIds: [],
+          enabled: true,
+          isDefault: true,
+          source: 'custom',
+          presetId: '',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    const result = sync.sync('main-agent-cwd');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const mainEntry = config.agents.list.find((entry: { id?: string }) => entry.id === 'main');
+
+    expect(config.agents.defaults.workspace).toBe(path.join(stateDir, 'workspace-main'));
+    expect(config.agents.defaults.cwd).toBe(path.resolve(mainAgentWorkingDirectory));
+    expect(mainEntry.cwd).toBe(path.resolve(mainAgentWorkingDirectory));
+  });
+
   test('merges all server models into existing lobsterai provider and updates image input', async () => {
     mockRuntimeState.proxyPort = 56646;
     mockRuntimeState.serverModels = [

@@ -6,7 +6,7 @@
  */
 
 import { PlatformRegistry } from '../../shared/platform';
-import type { CoworkStore } from '../coworkStore';
+import type { CoworkSession, CoworkStore } from '../coworkStore';
 import { t } from '../i18n';
 import type { IMStore } from '../im/imStore';
 import type { Platform } from '../im/types';
@@ -346,6 +346,23 @@ export class OpenClawChannelSessionSync {
     this.resolveJobName = deps.resolveJobName ?? null;
   }
 
+  private updateLocalSessionCwdIfNeeded(session: CoworkSession, agentId: string): void {
+    const resolvedCwd = this.getDefaultCwd(agentId).trim();
+    if (!resolvedCwd || session.cwd === resolvedCwd) {
+      return;
+    }
+
+    const updateSession = (this.coworkStore as { updateSession?: CoworkStore['updateSession'] }).updateSession;
+    if (!updateSession) {
+      return;
+    }
+
+    updateSession.call(this.coworkStore, session.id, { cwd: resolvedCwd }, { touchUpdatedAt: false });
+    console.debug(
+      `[ChannelSessionSync] corrected local session ${session.id} cwd for agent ${agentId} to ${resolvedCwd}`,
+    );
+  }
+
   /**
    * Check if a gateway session key belongs to the agent currently bound to its platform.
    * When users switch agent bindings, the gateway retains old sessions under the previous
@@ -465,6 +482,7 @@ export class OpenClawChannelSessionSync {
           this.agentChangedSessionIds.add(newSession.id);
           return newSession.id;
         }
+        this.updateLocalSessionCwdIfNeeded(session, currentAgentId);
         console.log(
           '[ChannelSessionSync] existing cowork session found, reusing:',
           existingMapping.coworkSessionId,
@@ -544,6 +562,7 @@ export class OpenClawChannelSessionSync {
     if (existingMapping) {
       const session = this.coworkStore.getSession(existingMapping.coworkSessionId);
       if (session) {
+        this.updateLocalSessionCwdIfNeeded(session, existingMapping.agentId);
         this.syncedSessionKeys.set(sessionKey, existingMapping.coworkSessionId);
         if (existingMapping.openClawSessionKey !== sessionKey) {
           this.imStore.updateSessionOpenClawSessionKey(parsed.conversationId, parsed.platform, sessionKey);
