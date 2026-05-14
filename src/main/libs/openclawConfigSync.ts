@@ -1184,7 +1184,12 @@ export class OpenClawConfigSync {
     );
 
     const mainWorkspacePath = getMainAgentWorkspacePath(this.engineManager.getStateDir());
-    const taskWorkingDirectory = (coworkConfig.workingDirectory || '').trim();
+    const agents = this.getAgents?.() ?? [];
+    const mainAgentWorkingDirectory = agents
+      .find(agent => agent.id === AgentId.Main)
+      ?.workingDirectory
+      ?.trim() || '';
+    const taskWorkingDirectory = mainAgentWorkingDirectory || (coworkConfig.workingDirectory || '').trim();
     ensureDir(mainWorkspacePath);
 
     const preinstalledPlugins = readPreinstalledPlugins();
@@ -1317,7 +1322,7 @@ export class OpenClawConfigSync {
             },
           } : {}),
         },
-        ...this.buildAgentsList(primaryModel, this.engineManager.getStateDir(), availableProviders),
+        ...this.buildAgentsList(primaryModel, this.engineManager.getStateDir(), availableProviders, agents),
       },
       ...this.currentBindingsObj,
       session: this.buildSessionConfig(),
@@ -2618,8 +2623,9 @@ export class OpenClawConfigSync {
     defaultPrimaryModel: string,
     stateDir?: string,
     availableProviders?: Record<string, { models: Array<{ id: string }> }>,
+    agentsOverride?: Agent[],
   ): { list?: Array<Record<string, unknown>> } {
-    const agents = this.getAgents?.() ?? [];
+    const agents = agentsOverride ?? this.getAgents?.() ?? [];
     const mainAgent = agents.find(agent => agent.id === AgentId.Main);
 
     const list: Array<Record<string, unknown>> = [
