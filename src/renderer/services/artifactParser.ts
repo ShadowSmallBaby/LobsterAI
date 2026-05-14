@@ -12,19 +12,6 @@ export function normalizeFilePathForDedup(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
 }
 
-const LANGUAGE_TO_ARTIFACT_TYPE: Record<string, ArtifactType> = {
-  html: 'html',
-  svg: 'svg',
-  mermaid: 'mermaid',
-  jsx: 'code',
-  tsx: 'code',
-  markdown: 'markdown',
-  md: 'markdown',
-  text: 'text',
-  txt: 'text',
-  plaintext: 'text',
-};
-
 const EXTENSION_TO_ARTIFACT_TYPE: Record<string, ArtifactType> = {
   '.html': 'html',
   '.htm': 'html',
@@ -52,11 +39,7 @@ const EXTENSION_TO_ARTIFACT_TYPE: Record<string, ArtifactType> = {
 };
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
-const BINARY_DOCUMENT_EXTENSIONS = new Set(['.docx', '.xlsx', '.pptx', '.pdf']);
-
-export function getArtifactTypeFromLanguage(lang: string): ArtifactType | null {
-  return LANGUAGE_TO_ARTIFACT_TYPE[lang.toLowerCase()] ?? null;
-}
+const BINARY_DOCUMENT_EXTENSIONS = new Set(['.docx', '.xlsx', '.pptx', '.pdf', '.csv', '.tsv', '.xls']);
 
 export function getArtifactTypeFromExtension(ext: string): ArtifactType | null {
   return EXTENSION_TO_ARTIFACT_TYPE[ext.toLowerCase()] ?? null;
@@ -70,7 +53,9 @@ export function isBinaryDocumentExtension(ext: string): boolean {
   return BINARY_DOCUMENT_EXTENSIONS.has(ext.toLowerCase());
 }
 
-export function parseCodeBlockArtifacts(
+export const MEDIA_TOKEN_RE = /\bMEDIA:\s*`?([^`\n]+?)`?\s*$/gim;
+
+export function parseMediaTokensFromText(
   messageContent: string,
   messageId: string,
   sessionId: string,
@@ -78,34 +63,40 @@ export function parseCodeBlockArtifacts(
   if (!messageContent) return [];
 
   const artifacts: Artifact[] = [];
-  const re = /```(artifact:)?(\w+)(?:\s+title="([^"]*)")?\s*\n([\s\S]*?)```/g;
+  const re = new RegExp(MEDIA_TOKEN_RE.source, 'gim');
   let match: RegExpExecArray | null;
   let index = 0;
 
   while ((match = re.exec(messageContent)) !== null) {
-    const isExplicitArtifact = Boolean(match[1]);
-    const language = match[2];
-    const explicitTitle = match[3];
-    const content = match[4].trimEnd();
+    let filePath = match[1].trim();
+    if (!filePath) continue;
 
-    const artifactType = getArtifactTypeFromLanguage(language);
-
-    if (!artifactType && !isExplicitArtifact) {
-      continue;
+    if (filePath.startsWith('file:///')) {
+      filePath = filePath.slice(7);
+    } else if (filePath.startsWith('file://')) {
+      filePath = filePath.slice(7);
     }
 
-    const type = artifactType ?? 'code';
-    const title = explicitTitle || generateTitle(type, language, content);
+    // Strip leading / before Windows drive letter (e.g. /D:/path from file:///D:/path)
+    if (/^\/[A-Za-z]:/.test(filePath)) {
+      filePath = filePath.slice(1);
+    }
+
+    const ext = getFileExtension(filePath);
+    const artifactType = getArtifactTypeFromExtension(ext);
+    if (!artifactType) continue;
+
+    const fileName = getFileName(filePath);
 
     artifacts.push({
-      id: `artifact-${messageId}-${index}`,
+      id: `artifact-media-${messageId}-${index}`,
       messageId,
       sessionId,
-      type,
-      title,
-      content,
-      language: type === 'code' ? language : undefined,
-      source: 'codeblock',
+      type: artifactType,
+      title: fileName,
+      content: '',
+      fileName,
+      filePath,
       createdAt: Date.now(),
     });
 
@@ -167,7 +158,6 @@ export function parseFilePathsFromText(
       content: '',
       fileName,
       filePath,
-      source: 'tool',
       createdAt: Date.now(),
     });
 
@@ -216,7 +206,6 @@ export function parseFileLinksFromMessage(
       content: '',
       fileName,
       filePath,
-      source: 'tool',
       createdAt: Date.now(),
     });
 
@@ -224,29 +213,6 @@ export function parseFileLinksFromMessage(
   }
 
   return artifacts;
-}
-
-function generateTitle(type: ArtifactType, language: string, content: string): string {
-  switch (type) {
-    case 'html': {
-      const titleMatch = content.match(/<title>([^<]+)<\/title>/i);
-      return titleMatch ? titleMatch[1] : 'HTML Page';
-    }
-    case 'svg':
-      return 'SVG Image';
-    case 'mermaid':
-      return 'Mermaid Diagram';
-    case 'image':
-      return 'Image';
-    case 'markdown':
-      return 'Markdown Document';
-    case 'text':
-      return 'Text File';
-    case 'document':
-      return 'Document';
-    case 'code':
-      return `${language.charAt(0).toUpperCase() + language.slice(1)} Code`;
-  }
 }
 
 const WRITE_TOOL_NAMES = new Set(['write', 'writefile', 'write_file']);
@@ -314,7 +280,6 @@ export function parseToolArtifact(
     content,
     fileName,
     filePath,
-    source: 'tool',
     createdAt: toolUseMsg.timestamp || Date.now(),
   };
 }

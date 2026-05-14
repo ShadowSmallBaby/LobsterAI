@@ -50,6 +50,7 @@ vi.mock('./claudeSettings', () => ({
 }));
 
 vi.mock('./openclawLocalExtensions', () => ({
+  findBundledExtensionsDir: () => null,
   findThirdPartyExtensionsDir: () => null,
   hasBundledOpenClawExtension: (id: string) => id !== 'qwen-portal-auth',
   resolveOpenClawExtensionPluginId: (id: string) => {
@@ -241,6 +242,76 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.agents.defaults.cwd).toBe(path.resolve(tmpDir));
   });
 
+  test('uses the main agent working directory for default agent cwd', async () => {
+    const { OpenClawConfigSync } = await import('./openclawConfigSync');
+    const legacyWorkingDirectory = path.join(tmpDir, 'legacy-working-directory');
+    const mainAgentWorkingDirectory = path.join(tmpDir, 'main-agent-working-directory');
+
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getGatewayToken: () => 'gateway-token',
+        getStateDir: () => stateDir,
+        getBaseDir: () => tmpDir,
+      } as never,
+      getCoworkConfig: () => ({
+        workingDirectory: legacyWorkingDirectory,
+        systemPrompt: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        memoryEnabled: false,
+        memoryImplicitUpdateEnabled: false,
+        memoryLlmJudgeEnabled: false,
+        memoryGuardLevel: 'balanced',
+        memoryUserMemoriesMaxItems: 100,
+        skipMissedJobs: false,
+      }),
+      isEnterprise: () => false,
+      getTelegramInstances: () => [],
+      getDiscordOpenClawConfig: () => null,
+      getDingTalkInstances: () => [],
+      getFeishuInstances: () => [],
+      getQQInstances: () => [],
+      getWecomConfig: () => null,
+      getWecomInstances: () => [],
+      getPopoInstances: () => [],
+      getNimConfig: () => null,
+      getNeteaseBeeChanConfig: () => null,
+      getWeixinConfig: () => null,
+      getIMSettings: () => null,
+      getSkillsList: () => [],
+      getAgents: () => [
+        {
+          id: 'main',
+          name: 'Main',
+          description: '',
+          systemPrompt: '',
+          identity: '',
+          model: '',
+          workingDirectory: mainAgentWorkingDirectory,
+          icon: '',
+          skillIds: [],
+          enabled: true,
+          isDefault: true,
+          source: 'custom',
+          presetId: '',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    const result = sync.sync('main-agent-cwd');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const mainEntry = config.agents.list.find((entry: { id?: string }) => entry.id === 'main');
+
+    expect(config.agents.defaults.workspace).toBe(path.join(stateDir, 'workspace-main'));
+    expect(config.agents.defaults.cwd).toBe(path.resolve(mainAgentWorkingDirectory));
+    expect(mainEntry.cwd).toBe(path.resolve(mainAgentWorkingDirectory));
+  });
+
   test('merges all server models into existing lobsterai provider and updates image input', async () => {
     mockRuntimeState.proxyPort = 56646;
     mockRuntimeState.serverModels = [
@@ -381,72 +452,6 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(customSelection.providerId).toBe('custom_0');
     expect(customSelection.primaryModel).toBe('custom_0/qwen3.6-plus');
     expect(customSelection.providerConfig.models[0].input).toEqual(['text', 'image']);
-  });
-
-  test('adds missing array items in MCP bridge tool schemas for OpenAI compatibility', async () => {
-    const { OpenClawConfigSync } = await import('./openclawConfigSync');
-
-    const sync = new OpenClawConfigSync({
-      engineManager: {
-        getConfigPath: () => configPath,
-        getGatewayToken: () => 'gateway-token',
-        getStateDir: () => stateDir,
-        getBaseDir: () => tmpDir,
-      } as never,
-      getCoworkConfig: () => ({
-        workingDirectory: tmpDir,
-        systemPrompt: '',
-        executionMode: 'local',
-        agentEngine: 'openclaw',
-        memoryEnabled: false,
-        memoryImplicitUpdateEnabled: false,
-        memoryLlmJudgeEnabled: false,
-        memoryGuardLevel: 'balanced',
-        memoryUserMemoriesMaxItems: 100,
-        skipMissedJobs: false,
-      }),
-      isEnterprise: () => false,
-      getTelegramInstances: () => [],
-      getDiscordOpenClawConfig: () => null,
-      getDingTalkInstances: () => [],
-      getFeishuInstances: () => [],
-      getQQInstances: () => [],
-      getWecomConfig: () => null,
-      getWecomInstances: () => [],
-      getPopoInstances: () => [],
-      getNimConfig: () => null,
-      getNeteaseBeeChanConfig: () => null,
-      getWeixinConfig: () => null,
-      getIMSettings: () => null,
-      getSkillsList: () => [],
-      getAgents: () => [],
-      getMcpBridgeConfig: () => ({
-        callbackUrl: 'http://127.0.0.1:12345/mcp',
-        askUserCallbackUrl: 'http://127.0.0.1:12345/ask',
-        secret: 'test-secret',
-        tools: [{
-          server: 'github',
-          name: 'create_issue',
-          description: 'Create an issue',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              attachments: {
-                type: 'array',
-                description: 'Optional issue attachments',
-              },
-            },
-          },
-        }],
-      }),
-    });
-
-    const result = sync.sync('test');
-    expect(result.ok).toBe(true);
-
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    const [tool] = config.plugins.entries['mcp-bridge'].config.tools;
-    expect(tool.inputSchema.properties.attachments.items).toEqual({});
   });
 
   test('writes Telegram streaming in the nested schema expected by current OpenClaw', async () => {
