@@ -1860,6 +1860,46 @@ const getIMGatewayManager = () => {
   return imGatewayManager;
 };
 
+const refreshImSessionWorkingDirectoriesForAgent = (agentId: string): number => {
+  const normalizedAgentId = agentId.trim() || AgentId.Main;
+  const resolvedCwd = resolveAgentDefaultWorkingDirectory(normalizedAgentId);
+  if (!resolvedCwd) {
+    return 0;
+  }
+
+  try {
+    const imStore = getIMGatewayManager().getIMStore();
+    const coworkStore = getCoworkStore();
+    let updatedCount = 0;
+
+    for (const mapping of imStore.listSessionMappings()) {
+      if ((mapping.agentId || AgentId.Main) !== normalizedAgentId) {
+        continue;
+      }
+
+      const session = coworkStore.getSession(mapping.coworkSessionId);
+      if (!session || session.cwd === resolvedCwd) {
+        continue;
+      }
+
+      coworkStore.updateSession(session.id, { cwd: resolvedCwd }, { touchUpdatedAt: false });
+      updatedCount += 1;
+    }
+
+    if (updatedCount > 0) {
+      console.debug(
+        `[ChannelSessionSync] refreshed ${updatedCount} IM session working directories for agent ${normalizedAgentId} to ${resolvedCwd}`,
+      );
+    }
+
+    openClawRuntimeAdapter?.clearChannelSessionCache();
+    return updatedCount;
+  } catch (error) {
+    console.warn('[ChannelSessionSync] failed to refresh IM session working directories:', error);
+    return 0;
+  }
+};
+
 function mergeCoworkSystemPrompt(
   systemPrompt?: string,
 ): string | undefined {
@@ -3304,11 +3344,23 @@ if (!gotTheLock) {
 
   ipcMain.handle(AgentIpcChannel.Update, async (_event, id: string, updates: import('./coworkStore').UpdateAgentRequest) => {
     try {
+      const previousAgent = getAgentManager().getAgent(id);
+      const previousWorkingDirectory = previousAgent?.workingDirectory?.trim() || '';
+      const nextWorkingDirectory = updates.workingDirectory?.trim() || '';
+      const workingDirectoryChanged = updates.workingDirectory !== undefined
+        && previousAgent !== null
+        && previousWorkingDirectory !== nextWorkingDirectory;
       const agent = getAgentManager().updateAgent(id, updates);
+      if (workingDirectoryChanged && agent) {
+        refreshImSessionWorkingDirectoriesForAgent(agent.id);
+      }
       const shouldSyncOpenClawConfig = Object.keys(updates).some((key) => key !== 'pinned');
       if (shouldSyncOpenClawConfig) {
-        syncOpenClawConfig({ reason: 'agent-updated' }).catch((err) => {
-          console.error('[OpenClaw] config sync after agent-updated failed:', err);
+        syncOpenClawConfig({
+          reason: workingDirectoryChanged ? 'agent-working-directory-updated' : 'agent-updated',
+          restartGatewayIfRunning: workingDirectoryChanged,
+        }).catch((err) => {
+          console.error('[OpenClaw] config sync after agent update failed:', err);
         });
       }
       return { success: true, agent };

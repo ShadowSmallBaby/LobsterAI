@@ -212,6 +212,64 @@ test('channel sync backfills the real OpenClaw session key for existing mappings
   expect(updateSessionOpenClawSessionKey).toHaveBeenCalledWith('dm:ou_123', 'feishu', sessionKey);
 });
 
+test('channel sync corrects existing mapping cwd from the current bound agent', () => {
+  const updateSession = vi.fn();
+  const sync = new OpenClawChannelSessionSync({
+    coworkStore: {
+      getSession: () => ({
+        id: 'cowork-1',
+        title: '[Feishu] ou_123',
+        claudeSessionId: null,
+        status: 'idle',
+        pinned: false,
+        cwd: '/tmp/old',
+        systemPrompt: '',
+        modelOverride: '',
+        executionMode: 'local',
+        activeSkillIds: [],
+        agentId: 'writer',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+      createSession: () => {
+        throw new Error('createSession should not be called');
+      },
+      updateSession,
+    },
+    imStore: {
+      getIMSettings: () => ({
+        skillsEnabled: true,
+        platformAgentBindings: {
+          feishu: 'writer',
+        },
+      }),
+      getSessionMapping: () => ({
+        imConversationId: 'dm:ou_123',
+        platform: 'feishu',
+        coworkSessionId: 'cowork-1',
+        agentId: 'writer',
+        openClawSessionKey: 'agent:writer:feishu:dm:ou_123',
+        createdAt: 1,
+        lastActiveAt: 1,
+      }),
+      updateSessionLastActive: () => {},
+      deleteSessionMapping: () => {},
+      createSessionMapping: () => {},
+    },
+    getDefaultCwd: (agentId?: string) => `/repo/${agentId || 'main'}`,
+  });
+
+  const sessionKey = 'agent:writer:feishu:dm:ou_123';
+
+  expect(sync.resolveOrCreateSession(sessionKey)).toBe('cowork-1');
+  expect(updateSession).toHaveBeenCalledWith(
+    'cowork-1',
+    { cwd: '/repo/writer' },
+    { touchUpdatedAt: false },
+  );
+});
+
 // --- buildChannelDisplayName ---
 
 test('buildChannelDisplayName strips email domain and removes direct prefix', () => {
