@@ -6,8 +6,8 @@ import {
   type CoworkMessage,
   type CoworkPermissionRequest,
   type CoworkSession,
-  CoworkSessionStatusValue,
   type CoworkSessionStatus,
+  CoworkSessionStatusValue,
   type CoworkSessionSummary,
 } from '../../types/cowork';
 import { removeSessionFromState, removeSessionsFromState } from './coworkDeleteState';
@@ -333,11 +333,9 @@ const coworkSlice = createSlice({
       const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
       if (sessionIndex !== -1) {
         state.sessions[sessionIndex].title = title;
-        state.sessions[sessionIndex].updatedAt = Date.now();
       }
       if (state.currentSession?.id === sessionId) {
         state.currentSession.title = title;
-        state.currentSession.updatedAt = Date.now();
       }
     },
 

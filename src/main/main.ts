@@ -3176,7 +3176,7 @@ if (!gotTheLock) {
         return { success: false, error: 'Title is required' };
       }
       const coworkStoreInstance = getCoworkStore();
-      coworkStoreInstance.updateSession(options.sessionId, { title });
+      coworkStoreInstance.updateSession(options.sessionId, { title }, { touchUpdatedAt: false });
       return { success: true };
     } catch (error) {
       return {
