@@ -2329,7 +2329,9 @@ if (!gotTheLock) {
 
     if (resp.status === 401 && tokens.refreshToken) {
       const serverBaseUrl = getServerApiBaseUrl();
-      const refreshResp = await net.fetch(`${serverBaseUrl}/api/auth/refresh`, {
+      const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
+      console.log(`[Auth] requesting token refresh after unauthorized response at ${refreshUrl}`);
+      const refreshResp = await net.fetch(refreshUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(withKeyfromBody({ refreshToken: tokens.refreshToken })),
@@ -2402,7 +2404,9 @@ if (!gotTheLock) {
   ipcMain.handle('auth:exchange', async (_event, { code }: { code: string }) => {
     try {
       const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await net.fetch(`${serverBaseUrl}/api/auth/exchange`, {
+      const exchangeUrl = `${serverBaseUrl}/api/auth/exchange`;
+      console.log(`[Auth] requesting auth exchange at ${exchangeUrl}`);
+      const resp = await net.fetch(exchangeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(withKeyfromBody({ authCode: code })),
@@ -2478,7 +2482,9 @@ if (!gotTheLock) {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
       const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await fetchWithAuth(appendKeyfromQuery(`${serverBaseUrl}/api/user/profile-summary`));
+      const profileSummaryUrl = appendKeyfromQuery(`${serverBaseUrl}/api/user/profile-summary`);
+      console.log(`[Auth] requesting profile summary at ${profileSummaryUrl}`);
+      const resp = await fetchWithAuth(profileSummaryUrl);
       if (!resp.ok) return { success: false };
       const body = await resp.json() as { code: number; data: Record<string, unknown> };
       if (body.code !== 0 || !body.data) return { success: false };
@@ -2493,7 +2499,9 @@ if (!gotTheLock) {
       const tokens = getAuthTokens();
       if (tokens) {
         const serverBaseUrl = getServerApiBaseUrl();
-        await net.fetch(`${serverBaseUrl}/api/auth/logout`, {
+        const logoutUrl = `${serverBaseUrl}/api/auth/logout`;
+        console.log(`[Auth] requesting logout at ${logoutUrl}`);
+        await net.fetch(logoutUrl, {
           method: 'POST',
           headers: { Authorization: `Bearer ${tokens.accessToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify(withKeyfromBody({})),
@@ -2514,7 +2522,9 @@ if (!gotTheLock) {
       const tokens = getAuthTokens();
       if (!tokens?.refreshToken) return { success: false };
       const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await net.fetch(`${serverBaseUrl}/api/auth/refresh`, {
+      const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
+      console.log(`[Auth] requesting manual token refresh at ${refreshUrl}`);
+      const resp = await net.fetch(refreshUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(withKeyfromBody({ refreshToken: tokens.refreshToken })),
@@ -2543,7 +2553,7 @@ if (!gotTheLock) {
       }
       const serverBaseUrl = getServerApiBaseUrl();
       const url = appendKeyfromQuery(`${serverBaseUrl}/api/models/available`);
-      console.log('[Auth:getModels] Fetching:', url);
+      console.log(`[Auth:getModels] requesting available models at ${url}`);
       const resp = await fetchWithAuth(url);
       console.log('[Auth:getModels] Response status:', resp.status);
       if (!resp.ok) {
@@ -6241,7 +6251,9 @@ end tell'`, { timeout: 5000 });
           const tokens = getAuthTokens();
           if (!tokens?.refreshToken) return null;
           const serverBaseUrl = getServerApiBaseUrl();
-          const resp = await net.fetch(`${serverBaseUrl}/api/auth/refresh`, {
+          const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
+          console.log(`[Auth] requesting token refresh (reason: ${reason}) at ${refreshUrl}`);
+          const resp = await net.fetch(refreshUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(withKeyfromBody({ refreshToken: tokens.refreshToken })),
@@ -6303,7 +6315,9 @@ end tell'`, { timeout: 5000 });
       if (!tokens?.refreshToken) return null;
       const serverBaseUrl = getServerApiBaseUrl();
       try {
-        const resp = await net.fetch(`${serverBaseUrl}/api/auth/refresh`, {
+        const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
+        console.log(`[Auth] requesting proxy token refresh at ${refreshUrl}`);
+        const resp = await net.fetch(refreshUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(withKeyfromBody({ refreshToken: tokens.refreshToken })),
