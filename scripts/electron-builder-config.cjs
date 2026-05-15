@@ -34,7 +34,44 @@ function readBuildKeyfrom() {
   }
 }
 
+function asArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value == null) return [];
+  return [value];
+}
+
+function resourceKey(resource) {
+  if (typeof resource === 'string') return `string:${resource}`;
+  return `${resource?.from || ''}->${resource?.to || ''}`;
+}
+
+function mergeExtraResources(platformName) {
+  const baseResources = asArray(config.extraResources);
+  const platformConfig = config[platformName] || {};
+  const platformResources = asArray(platformConfig.extraResources);
+  const merged = [];
+  const seen = new Set();
+
+  for (const resource of [...baseResources, ...platformResources]) {
+    const key = resourceKey(resource);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(resource);
+  }
+
+  config[platformName] = {
+    ...platformConfig,
+    extraResources: merged,
+  };
+}
+
 const keyfrom = readBuildKeyfrom();
+
+for (const platformName of ['mac', 'win', 'linux']) {
+  mergeExtraResources(platformName);
+}
+
+delete config.extraResources;
 
 config.dmg = {
   ...(config.dmg || {}),

@@ -367,6 +367,7 @@ LobsterAI-Setup-x64-2026.5.14-bilibili.exe
 - Windows 文件名不额外添加 `win`，因为 `.exe` 和 `Setup-x64` 已经能表达平台和架构。
 - 未传 `KEYFROM` 时，文件名使用默认渠道 `official`。
 - 产物命名只影响 release 文件名，不改变应用显示名、安装目录、可执行文件名和运行时归因逻辑。
+- 如果 `electron-builder` 同时存在顶层和平台级 `extraResources`，需要确保 `.keyfrom-build` 被显式合并进 macOS / Windows 平台级资源列表，避免产物文件名带渠道但包内缺少 `resources/keyfrom/keyfrom.json`。
 
 ### FR-9: 日志
 
