@@ -146,6 +146,19 @@ KEYFROM=xxx npm run dist:mac:arm64
 KEYFROM=xxx npm run dist:win
 ```
 
+```bash
+# 渠道包
+# macOS - 仅 Intel
+KEYFROM=baidu npm run dist:mac:x64
+
+# macOS - 仅 Apple Silicon
+KEYFROM=baidu npm run dist:mac:arm64
+
+# Windows (.exe NSIS 安装包)
+KEYFROM=baidu npm run dist:win
+```
+
+
 桌面端打包（macOS / Windows / Linux）都会把预构建的 OpenClaw runtime 内置到 `Resources/cfmind`。
 锁定的 OpenClaw 版本（`package.json` → `openclaw.version`）在打包时会自动拉取并构建，无需手动操作。
 构建结果带缓存：如果本地已存在对应版本的 runtime，构建步骤会自动跳过。

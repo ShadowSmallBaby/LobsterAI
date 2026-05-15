@@ -339,20 +339,34 @@ KEYFROM=bilibili npm run dist:win
 
 渠道包产物应能从文件名上区分来源，便于投放和人工核对。
 
-建议命名：
+命名规则：
 
 ```text
-LobsterAI-<version>-<platform>-<arch>-<keyfrom>.<ext>
+Mac Intel:
+LobsterAI-darwin-x64-<version>-<keyfrom>.dmg
+
+Mac Apple Silicon:
+LobsterAI-darwin-arm64-<version>-<keyfrom>.dmg
+
+Windows x64:
+LobsterAI-Setup-x64-<version>-<keyfrom>.exe
 ```
 
 示例：
 
 ```text
-LobsterAI-2026.5.14-mac-arm64-bilibili.dmg
-LobsterAI-2026.5.14-win-x64-partner_a.exe
+LobsterAI-darwin-x64-2026.5.14-bilibili.dmg
+LobsterAI-darwin-arm64-2026.5.14-bilibili.dmg
+LobsterAI-Setup-x64-2026.5.14-bilibili.exe
 ```
 
-第一版可以先在打包脚本中生成渠道固化文件，产物重命名可以作为同一功能的后续小迭代；但 spec 中需要保留命名要求，避免渠道包人工分发时混淆。
+说明：
+
+- `keyfrom` 放在文件名末尾，弱化渠道字段，不抢产品名位置。
+- Windows 保留 `Setup`，符合 Windows 安装器命名习惯。
+- Windows 文件名不额外添加 `win`，因为 `.exe` 和 `Setup-x64` 已经能表达平台和架构。
+- 未传 `KEYFROM` 时，文件名使用默认渠道 `official`。
+- 产物命名只影响 release 文件名，不改变应用显示名、安装目录、可执行文件名和运行时归因逻辑。
 
 ### FR-9: 日志
 
@@ -799,6 +813,7 @@ params.set('latestKeyfrom', latestKeyfrom);
 - `src/main/libs/keyfromAttribution.ts`
 - `src/main/libs/keyfromAttribution.test.ts`
 - `scripts/generate-keyfrom-build-info.cjs`
+- `scripts/electron-builder-config.cjs`
 
 预计修改：
 
@@ -838,5 +853,91 @@ params.set('latestKeyfrom', latestKeyfrom);
 14. `/api/auth/logout` 保持 best-effort 和本地 token 清理逻辑，只在请求 body 追加可用的归因参数。
 15. `/api/user/profile-summary` 和 `/api/models/available` 保持 GET 和 Bearer 鉴权，只在 query 追加可用的归因参数。
 16. `/lobsterai/{env}/update` 和 `/lobsterai/{env}/update-manual` 保持 GET，只在 query 追加可用的归因参数。
-17. 测试服和正式服 URL 仍由现有 endpoints helper 决定，keyfrom 参数追加逻辑不改变环境切换。
-18. 本阶段没有修改支付接口、服务端归因绑定、报表或合作方结算逻辑。
+17. 渠道包产物文件名包含版本、平台/架构和 `keyfrom`，且 `keyfrom` 位于文件名末尾。
+18. 未传 `KEYFROM` 打包时，产物文件名使用 `official`。
+19. 测试服和正式服 URL 仍由现有 endpoints helper 决定，keyfrom 参数追加逻辑不改变环境切换。
+20. 本阶段没有修改支付接口、服务端归因绑定、报表或合作方结算逻辑。
+
+## 8. 初步手工验证方法
+
+建议按以下顺序验证，逐层确认渠道包是否正确：
+
+```text
+安装包文件名包含渠道
+→ 包内 keyfrom.json 正确
+→ 首次启动 SQLite first/latest 正确
+→ 请求日志里归因参数正确
+```
+
+### 8.1 安装包文件名
+
+打包完成后，先通过安装包文件名做快速判断。
+
+示例：
+
+```text
+LobsterAI-darwin-x64-2026.5.14-bilibili.dmg
+LobsterAI-darwin-arm64-2026.5.14-bilibili.dmg
+LobsterAI-Setup-x64-2026.5.14-bilibili.exe
+```
+
+如果未传 `KEYFROM`，文件名中的渠道应为 `official`。
+
+### 8.2 手动查看包内 keyfrom.json
+
+macOS：
+
+1. 双击 `.dmg` 安装包。
+2. 在弹出的挂载窗口中找到 `LobsterAI.app`。
+3. 右键 `LobsterAI.app`，选择“显示包内容”。
+4. 进入 `Contents/Resources/keyfrom/`。
+5. 打开 `keyfrom.json`，确认 `keyfrom` 等于本次打包传入的渠道。
+
+Windows：
+
+1. 双击 `.exe` 安装包完成安装。
+2. 打开资源管理器。
+3. 在地址栏输入 `%LOCALAPPDATA%\Programs\LobsterAI\resources\keyfrom`。
+4. 打开 `keyfrom.json`，确认 `keyfrom` 等于本次打包传入的渠道。
+
+示例内容：
+
+```json
+{
+  "keyfrom": "bilibili",
+  "generatedAt": "2026-05-15T08:04:48.717Z"
+}
+```
+
+说明：
+
+- `generatedAt` 使用 UTC ISO 字符串，仅用于构建信息排查。
+- 文件名正确只能说明打包命名读取到了渠道；包内 `keyfrom.json` 正确才能说明运行时可读取到渠道。
+
+### 8.3 首次启动和请求日志
+
+首次启动后，SQLite 中的归因值应符合：
+
+```json
+{
+  "firstKeyfrom": "bilibili",
+  "latestKeyfrom": "bilibili"
+}
+```
+
+后续用其他渠道包覆盖启动时：
+
+```json
+{
+  "firstKeyfrom": "bilibili",
+  "latestKeyfrom": "baidu"
+}
+```
+
+请求日志中应能看到 GET 请求 URL 携带归因参数，例如：
+
+```text
+firstKeyfrom=bilibili&latestKeyfrom=baidu
+```
+
+POST 请求不应打印完整 body，避免泄露 `authCode` 或 `refreshToken`。
