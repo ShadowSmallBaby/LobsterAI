@@ -41,7 +41,7 @@ import {
   OpenClawRuntimeAdapter,
   type PermissionResult,
 } from './libs/agentEngine';
-import { AppUpdateCoordinator } from './libs/appUpdateCoordinator';
+import { AppUpdateCoordinator, INSTALLATION_UUID_KEY } from './libs/appUpdateCoordinator';
 import { clearServerModelMetadata, getAllServerModelMetadata, getCurrentApiConfig, resolveAllEnabledProviderConfigs, resolveCurrentApiConfig, resolveRawApiConfig, setAuthTokensGetter, setServerBaseUrlGetter, setStoreGetter, updateServerModelMetadata } from './libs/claudeSettings';
 import {
   clearCopilotTokenState,
@@ -807,6 +807,8 @@ let coworkRuntimeForwarderBound = false;
 let memoryMigrationDone = false;
 let preventSleepBlockerId: number | null = null;
 let appUpdateCoordinator: AppUpdateCoordinator | null = null;
+
+const AUTH_USER_STORE_KEY = 'auth_user';
 
 function setPreventSleepBlockerEnabled(enabled: boolean): void {
   if (enabled) {
@@ -2294,21 +2296,76 @@ if (!gotTheLock) {
     getStore().delete('auth_tokens');
   };
 
-  const buildKeyfromPayload = (): { firstKeyfrom: string; latestKeyfrom: string } => {
-    const { firstKeyfrom, latestKeyfrom } = getKeyfromAttribution(getStore());
-    return { firstKeyfrom, latestKeyfrom };
+  const saveAuthUser = (user: Record<string, unknown>) => {
+    try {
+      getStore().set(AUTH_USER_STORE_KEY, user);
+    } catch (error) {
+      console.warn('[Auth] failed to save auth user for attribution:', error);
+    }
   };
 
-  const withKeyfromBody = <T extends Record<string, unknown>>(body: T): T & { firstKeyfrom: string; latestKeyfrom: string } => ({
+  const getAuthUserId = (): string | null => {
+    try {
+      const user = getStore().get<Record<string, unknown>>(AUTH_USER_STORE_KEY);
+      const yid = user?.yid;
+      if (typeof yid === 'string' && yid.trim()) return yid;
+      const userId = user?.userId;
+      if (typeof userId === 'string' && userId.trim()) return userId;
+    } catch (error) {
+      console.warn('[Auth] failed to read auth user for attribution:', error);
+    }
+    return null;
+  };
+
+  const clearAuthUser = () => {
+    try {
+      getStore().delete(AUTH_USER_STORE_KEY);
+    } catch (error) {
+      console.warn('[Auth] failed to clear auth user for attribution:', error);
+    }
+  };
+
+  const getOrCreateInstallationId = (): string | null => {
+    try {
+      const existing = getStore().get<string>(INSTALLATION_UUID_KEY);
+      if (typeof existing === 'string' && existing.trim()) {
+        return existing;
+      }
+      const nextId = crypto.randomUUID();
+      getStore().set(INSTALLATION_UUID_KEY, nextId);
+      return nextId;
+    } catch (error) {
+      console.warn('[Auth] failed to get installation uuid:', error);
+      return null;
+    }
+  };
+
+  const buildKeyfromPayload = (): { firstKeyfrom: string; latestKeyfrom: string; uuid?: string; userId?: string; version: string } => {
+    const { firstKeyfrom, latestKeyfrom } = getKeyfromAttribution(getStore());
+    const uuid = getOrCreateInstallationId();
+    const userId = getAuthUserId();
+    return {
+      firstKeyfrom,
+      latestKeyfrom,
+      ...(uuid ? { uuid } : {}),
+      ...(userId ? { userId } : {}),
+      version: app.getVersion(),
+    };
+  };
+
+  const withKeyfromBody = <T extends Record<string, unknown>>(body: T) => ({
     ...body,
     ...buildKeyfromPayload(),
   });
 
   const appendKeyfromQuery = (url: string): string => {
     const parsed = new URL(url);
-    const { firstKeyfrom, latestKeyfrom } = buildKeyfromPayload();
-    parsed.searchParams.set('firstKeyfrom', firstKeyfrom);
-    parsed.searchParams.set('latestKeyfrom', latestKeyfrom);
+    const payload = buildKeyfromPayload();
+    for (const [key, value] of Object.entries(payload)) {
+      if (value) {
+        parsed.searchParams.set(key, String(value));
+      }
+    }
     return parsed.toString();
   };
 
@@ -2428,6 +2485,7 @@ if (!gotTheLock) {
         return { success: false, error: body.message || 'Exchange failed' };
       }
       saveAuthTokens(body.data.accessToken, body.data.refreshToken);
+      saveAuthUser(body.data.user);
       console.log('[Auth] exchange user data:', JSON.stringify(body.data.user));
       return { success: true, user: body.data.user, quota: normalizeQuota(body.data.quota) };
     } catch (error) {
@@ -2446,6 +2504,7 @@ if (!gotTheLock) {
       if (!profileResp.ok) return { success: false };
       const profileBody = await profileResp.json() as { code: number; data: Record<string, unknown> };
       if (profileBody.code !== 0 || !profileBody.data) return { success: false };
+      saveAuthUser(profileBody.data);
       // Fetch quota separately
       const quotaResp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`);
       let quota = null;
@@ -2508,10 +2567,12 @@ if (!gotTheLock) {
         }).catch(() => { /* best-effort */ });
       }
       clearAuthTokens();
+      clearAuthUser();
       clearServerModelMetadata();
       return { success: true };
     } catch {
       clearAuthTokens();
+      clearAuthUser();
       clearServerModelMetadata();
       return { success: true };
     }

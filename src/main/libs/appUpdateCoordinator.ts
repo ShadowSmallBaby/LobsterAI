@@ -42,7 +42,7 @@ type UpdateApiResponse = {
   };
 };
 
-const INSTALLATION_UUID_KEY = 'installation_uuid';
+export const INSTALLATION_UUID_KEY = 'installation_uuid';
 const APP_UPDATE_TEST_CURRENT_VERSION_ENV = 'LOBSTERAI_UPDATE_CURRENT_VERSION';
 const APP_UPDATE_READY_FILE_KEY_PREFIX = 'app_update_ready_file';
 

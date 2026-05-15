@@ -394,19 +394,19 @@ KEYFROM=partner_a npm run electron:dev:openclaw
 - 开发模式读取运行时环境变量，是为了方便反复模拟不同渠道。
 - 开发模式不会要求真实生成安装包，也不依赖生产包内的 `resources/keyfrom/keyfrom.json`。
 
-### FR-11: 指定接口携带 keyfrom 参数
+### FR-11: 指定接口携带归因参数
 
 以下接口需要携带本地归因参数：
 
-| 接口                                                       | 当前请求方式 | 参数携带方式                                   |
-| ---------------------------------------------------------- | ------------ | ---------------------------------------------- |
-| `/api/auth/exchange`                                       | `POST`       | JSON body 追加 `firstKeyfrom`、`latestKeyfrom` |
-| `/api/auth/refresh`                                        | `POST`       | JSON body 追加 `firstKeyfrom`、`latestKeyfrom` |
-| `/api/auth/logout`                                         | `POST`       | JSON body 追加 `firstKeyfrom`、`latestKeyfrom` |
-| `/api/user/profile-summary`                                | `GET`        | URL query 追加 `firstKeyfrom`、`latestKeyfrom` |
-| `/api/models/available`                                    | `GET`        | URL query 追加 `firstKeyfrom`、`latestKeyfrom` |
-| `/openapi/get/luna/hardware/lobsterai/{env}/update`        | `GET`        | URL query 追加 `firstKeyfrom`、`latestKeyfrom` |
-| `/openapi/get/luna/hardware/lobsterai/{env}/update-manual` | `GET`        | URL query 追加 `firstKeyfrom`、`latestKeyfrom` |
+| 接口                                                       | 当前请求方式 | 参数携带方式                                                                |
+| ---------------------------------------------------------- | ------------ | --------------------------------------------------------------------------- |
+| `/api/auth/exchange`                                       | `POST`       | JSON body 追加 `firstKeyfrom`、`latestKeyfrom`、`uuid`、`version`、`userId` |
+| `/api/auth/refresh`                                        | `POST`       | JSON body 追加 `firstKeyfrom`、`latestKeyfrom`、`uuid`、`version`、`userId` |
+| `/api/auth/logout`                                         | `POST`       | JSON body 追加 `firstKeyfrom`、`latestKeyfrom`、`uuid`、`version`、`userId` |
+| `/api/user/profile-summary`                                | `GET`        | URL query 追加 `firstKeyfrom`、`latestKeyfrom`、`uuid`、`version`、`userId` |
+| `/api/models/available`                                    | `GET`        | URL query 追加 `firstKeyfrom`、`latestKeyfrom`、`uuid`、`version`、`userId` |
+| `/openapi/get/luna/hardware/lobsterai/{env}/update`        | `GET`        | URL query 追加 `firstKeyfrom`、`latestKeyfrom`、`uuid`、`version`、`userId` |
+| `/openapi/get/luna/hardware/lobsterai/{env}/update-manual` | `GET`        | URL query 追加 `firstKeyfrom`、`latestKeyfrom`、`uuid`、`version`、`userId` |
 
 POST body 示例：
 
@@ -414,17 +414,20 @@ POST body 示例：
 {
   "authCode": "<existing-auth-code>",
   "firstKeyfrom": "bilibili",
-  "latestKeyfrom": "baidu"
+  "latestKeyfrom": "baidu",
+  "uuid": "158d6395-ebc3-4235-b5d6-a46df4db9af4",
+  "version": "2026.5.14",
+  "userId": "urs-phoneyd.61cbc4eb015242369@163.com_1"
 }
 ```
 
 GET query 示例：
 
 ```text
-/api/user/profile-summary?firstKeyfrom=bilibili&latestKeyfrom=baidu
-/api/models/available?firstKeyfrom=bilibili&latestKeyfrom=baidu
-/openapi/get/luna/hardware/lobsterai/prod/update?uuid=...&version=...&firstKeyfrom=bilibili&latestKeyfrom=baidu
-/openapi/get/luna/hardware/lobsterai/prod/update-manual?uuid=...&version=...&firstKeyfrom=bilibili&latestKeyfrom=baidu
+/api/user/profile-summary?firstKeyfrom=bilibili&latestKeyfrom=baidu&uuid=...&version=2026.5.14&userId=...
+/api/models/available?firstKeyfrom=bilibili&latestKeyfrom=baidu&uuid=...&version=2026.5.14&userId=...
+/openapi/get/luna/hardware/lobsterai/prod/update?uuid=...&userId=...&version=...&firstKeyfrom=bilibili&latestKeyfrom=baidu
+/openapi/get/luna/hardware/lobsterai/prod/update-manual?uuid=...&userId=...&version=...&firstKeyfrom=bilibili&latestKeyfrom=baidu
 ```
 
 要求：
@@ -434,6 +437,9 @@ GET query 示例：
 - 原来是 `POST` 的继续 `POST`，原来是 `GET` 的继续 `GET`。
 - 原有成功、失败、重试、token 保存、清理本地 token、模型 metadata 同步逻辑保持不变。
 - 读取 keyfrom 失败时使用本地归因服务兜底结果，不应导致接口失败。
+- `uuid` 复用更新检查接口使用的 `installation_uuid`。
+- `version` 复用更新检查接口使用的当前应用版本。
+- `userId` 有本地登录用户信息时追加；登录前或本地缺失时不阻塞请求。
 
 ### FR-12: refresh 多调用点必须统一覆盖
 
@@ -646,7 +652,13 @@ KEYFROM=bilibili npm run dist:win
 ```ts
 const buildKeyfromPayload = () => {
   const { firstKeyfrom, latestKeyfrom } = getKeyfromAttribution(getStore());
-  return { firstKeyfrom, latestKeyfrom };
+  return {
+    firstKeyfrom,
+    latestKeyfrom,
+    uuid: getOrCreateInstallationId(),
+    version: app.getVersion(),
+    userId: getAuthUserId(),
+  };
 };
 
 const withKeyfromBody = (body: Record<string, unknown>) => ({
@@ -656,9 +668,10 @@ const withKeyfromBody = (body: Record<string, unknown>) => ({
 
 const appendKeyfromQuery = (url: string) => {
   const parsed = new URL(url);
-  const { firstKeyfrom, latestKeyfrom } = buildKeyfromPayload();
-  parsed.searchParams.set('firstKeyfrom', firstKeyfrom);
-  parsed.searchParams.set('latestKeyfrom', latestKeyfrom);
+  const payload = buildKeyfromPayload();
+  for (const [key, value] of Object.entries(payload)) {
+    if (value) parsed.searchParams.set(key, String(value));
+  }
   return parsed.toString();
 };
 ```
@@ -669,6 +682,8 @@ const appendKeyfromQuery = (url: string) => {
 - helper 不负责选择正式服或测试服。
 - helper 不打印 token 或完整请求体。
 - 如果读取本地归因异常，`getKeyfromAttribution()` 应返回兜底值，避免影响接口调用。
+- `uuid` 使用更新检查接口同一个 SQLite kv key：`installation_uuid`。
+- `userId` 复用主进程缓存的登录用户信息；如果当前请求发生在登录前，不追加该字段。
 
 ### 4.8 POST 接口接入
 
@@ -699,6 +714,7 @@ body: JSON.stringify(withKeyfromBody({})),
 - `logout` 仍然是 best-effort。
 - `logout` 请求失败仍然清理本地 token。
 - `exchange` 和 `refresh` 的 response 解析、token 保存和错误返回保持不变。
+- `exchange` / `getUser` 成功返回用户信息后，可将用户对象缓存到 SQLite kv，用于后续请求追加 `userId`。
 
 ### 4.9 GET 接口接入
 
@@ -721,6 +737,7 @@ const resp = await fetchWithAuth(url);
 - `fetchWithAuth()` 保持现有 Bearer token、401 refresh 和 retry 语义。
 - URL query 追加不改变接口 response 解析。
 - 如果后续 URL 已有 query，`URLSearchParams.set()` 应覆盖同名 key，避免重复参数。
+- 登录用户信息尚未恢复时，`userId` 可以缺省。
 
 ### 4.10 更新检查接口接入
 
@@ -765,9 +782,11 @@ params.set('latestKeyfrom', latestKeyfrom);
 | 用户复制安装包给他人                 | 新设备首次启动按该包渠道初始化，属于渠道包归因的正常限制                              |
 | 开发者想测试首次归因覆盖             | 需要先清理本地 kv 或 userData                                                         |
 | 测试服和正式服切换                   | 继续由 `getServerApiBaseUrl()` 控制 base URL，keyfrom helper 不参与环境判断           |
-| POST 接口追加参数                    | 保留原 body 字段，只追加 `firstKeyfrom`、`latestKeyfrom`                              |
-| GET 接口追加参数                     | 通过 query 追加 `firstKeyfrom`、`latestKeyfrom`，已有同名参数使用 `set()` 覆盖        |
+| POST 接口追加参数                    | 保留原 body 字段，只追加归因参数                                                      |
+| GET 接口追加参数                     | 通过 query 追加归因参数，已有同名参数使用 `set()` 覆盖                                |
 | 更新检查接口追加参数                 | 在 `getUpdateQueryString()` 中追加，自动覆盖 `/update` 和 `/update-manual`            |
+| 登录前请求追加 `userId`              | 本地没有登录用户信息时不追加，不阻塞 `/api/auth/exchange`                             |
+| 老用户覆盖安装                       | 首次发起相关请求时补齐 `installation_uuid` 和用户缓存，不需要数据库表结构迁移         |
 | 读取 keyfrom 失败                    | 使用归因服务兜底值，不阻塞原接口请求                                                  |
 | `/api/auth/refresh` 多调用点         | 所有 refresh 路径必须统一追加参数，不改变现有 token refresh 逻辑                      |
 
@@ -814,10 +833,10 @@ params.set('latestKeyfrom', latestKeyfrom);
 9. 单元测试覆盖 `normalizeKeyfrom()`、首次写入、不覆盖 `firstKeyfrom`、更新 `latestKeyfrom`、非法值回退。
 10. 新增 IPC channel、kv key、默认渠道等字符串均通过集中常量定义。
 11. 主进程日志符合 `[Keyfrom]` tag 和英文日志要求。
-12. `/api/auth/exchange` 请求 body 保留 `authCode`，并追加 `firstKeyfrom`、`latestKeyfrom`。
-13. `/api/auth/refresh` 所有调用点请求 body 保留 `refreshToken`，并追加 `firstKeyfrom`、`latestKeyfrom`。
-14. `/api/auth/logout` 保持 best-effort 和本地 token 清理逻辑，只在请求 body 追加 `firstKeyfrom`、`latestKeyfrom`。
-15. `/api/user/profile-summary` 和 `/api/models/available` 保持 GET 和 Bearer 鉴权，只在 query 追加 `firstKeyfrom`、`latestKeyfrom`。
-16. `/lobsterai/{env}/update` 和 `/lobsterai/{env}/update-manual` 保持 GET，只在 query 追加 `firstKeyfrom`、`latestKeyfrom`。
+12. `/api/auth/exchange` 请求 body 保留 `authCode`，并追加可用的归因参数。
+13. `/api/auth/refresh` 所有调用点请求 body 保留 `refreshToken`，并追加可用的归因参数。
+14. `/api/auth/logout` 保持 best-effort 和本地 token 清理逻辑，只在请求 body 追加可用的归因参数。
+15. `/api/user/profile-summary` 和 `/api/models/available` 保持 GET 和 Bearer 鉴权，只在 query 追加可用的归因参数。
+16. `/lobsterai/{env}/update` 和 `/lobsterai/{env}/update-manual` 保持 GET，只在 query 追加可用的归因参数。
 17. 测试服和正式服 URL 仍由现有 endpoints helper 决定，keyfrom 参数追加逻辑不改变环境切换。
 18. 本阶段没有修改支付接口、服务端归因绑定、报表或合作方结算逻辑。
