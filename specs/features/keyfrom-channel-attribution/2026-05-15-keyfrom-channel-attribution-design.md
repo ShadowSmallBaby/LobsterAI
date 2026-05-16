@@ -311,8 +311,33 @@ KeyfromIpc.GetAttribution;
 打包时支持：
 
 ```bash
+# macOS / Linux shell
 KEYFROM=bilibili npm run dist:mac:x64
 KEYFROM=bilibili npm run dist:mac:arm64
+```
+
+```powershell
+# Windows PowerShell
+$env:KEYFROM = "bilibili"
+npm run dist:win
+```
+
+```cmd
+:: Windows CMD
+set KEYFROM=bilibili && npm run dist:win
+```
+
+也可以使用项目已安装的 `cross-env` 统一命令：
+
+```bash
+npx cross-env KEYFROM=bilibili npm run dist:mac:x64
+npx cross-env KEYFROM=bilibili npm run dist:mac:arm64
+npx cross-env KEYFROM=bilibili npm run dist:win
+```
+
+不支持在 Windows PowerShell / CMD 中直接运行：
+
+```bash
 KEYFROM=bilibili npm run dist:win
 ```
 
@@ -606,17 +631,30 @@ scripts/generate-keyfrom-build-info.cjs
 当前推荐命令：
 
 ```bash
-# 开发测试
+# macOS / Linux shell: 开发测试
 KEYFROM=bilibili npm run electron:dev:openclaw
 
-# macOS x64 渠道包
+# macOS / Linux shell: macOS x64 渠道包
 KEYFROM=bilibili npm run dist:mac:x64
 
-# macOS arm64 渠道包
+# macOS / Linux shell: macOS arm64 渠道包
 KEYFROM=bilibili npm run dist:mac:arm64
+```
 
-# Windows x64 渠道包
-KEYFROM=bilibili npm run dist:win
+```powershell
+# Windows PowerShell: Windows x64 渠道包
+$env:KEYFROM = "bilibili"
+npm run dist:win
+```
+
+```cmd
+:: Windows CMD: Windows x64 渠道包
+set KEYFROM=bilibili && npm run dist:win
+```
+
+```bash
+# 跨平台写法，适合统一复制到文档或 CI 脚本
+npx cross-env KEYFROM=bilibili npm run dist:win
 ```
 
 构建脚本职责说明：
