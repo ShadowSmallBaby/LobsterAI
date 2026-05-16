@@ -45,7 +45,7 @@ diff --git a/extensions/xiaomi/index.ts b/extensions/xiaomi/index.ts
 index b4166c642d..868dd0d2b 100644
 --- a/extensions/xiaomi/index.ts
 +++ b/extensions/xiaomi/index.ts
-@@ -1,9 +1,14 @@
+@@ -1,9 +1,15 @@
  import { defineSingleProviderPluginEntry } from "openclaw/plugin-sdk/provider-entry";
 +import { buildProviderReplayFamilyHooks } from "openclaw/plugin-sdk/provider-model-shared";
  import { PROVIDER_LABELS } from "openclaw/plugin-sdk/provider-usage";
@@ -53,6 +53,7 @@ index b4166c642d..868dd0d2b 100644
  import { buildXiaomiProvider } from "./provider-catalog.js";
  
  const PROVIDER_ID = "xiaomi";
++const XIAOMI_DEFAULT_THINKING_LEVEL = "medium";
 +
 +const OPENAI_COMPATIBLE_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
 +  family: "openai-compatible",
@@ -60,14 +61,53 @@ index b4166c642d..868dd0d2b 100644
  
  export default defineSingleProviderPluginEntry({
    id: PROVIDER_ID,
-@@ -28,6 +33,7 @@ export default defineSingleProviderPluginEntry({
+@@ -28,6 +34,9 @@ export default defineSingleProviderPluginEntry({
      catalog: {
        buildProvider: buildXiaomiProvider,
      },
 +    ...OPENAI_COMPATIBLE_REPLAY_HOOKS,
++    resolveDefaultThinkingLevel: ({ reasoning }) =>
++      reasoning ? XIAOMI_DEFAULT_THINKING_LEVEL : "off",
      resolveUsageAuth: async (ctx) => {
        const apiKey = ctx.resolveApiKeyFromConfigAndStore({
          envDirect: [ctx.env.XIAOMI_API_KEY],
+diff --git a/extensions/xiaomi/onboard.test.ts b/extensions/xiaomi/onboard.test.ts
+index 615f1115e1..aa5f7dd1de 100644
+--- a/extensions/xiaomi/onboard.test.ts
++++ b/extensions/xiaomi/onboard.test.ts
+@@ -3,4 +3,6 @@ import {
+   expectProviderOnboardMergedLegacyConfig,
+   expectProviderOnboardPrimaryModel,
+ } from "../../test/helpers/plugins/provider-onboard.js";
++import { registerSingleProviderPlugin } from "../../test/helpers/plugins/plugin-registration.js";
++import xiaomiPlugin from "./index.js";
+ import { applyXiaomiConfig, applyXiaomiProviderConfig } from "./onboard.js";
+@@ -19,6 +21,24 @@ describe("xiaomi onboard", () => {
+     });
+   });
+-
++  it("defaults reasoning models to MiMo thinking mode", async () => {
++    const provider = await registerSingleProviderPlugin(xiaomiPlugin);
++
++    expect(
++      provider.resolveDefaultThinkingLevel?.({
++        provider: "xiaomi",
++        modelId: "mimo-v2-flash",
++        reasoning: true,
++      }),
++    ).toBe("medium");
++    expect(
++      provider.resolveDefaultThinkingLevel?.({
++        provider: "xiaomi",
++        modelId: "custom-chat-model",
++        reasoning: false,
++      }),
++    ).toBe("off");
++  });
++
+   it("merges Xiaomi models and keeps existing provider overrides", () => {
+     const provider = expectProviderOnboardMergedLegacyConfig({
+       applyProviderConfig: applyXiaomiProviderConfig,
 diff --git a/extensions/xiaomi/provider-catalog.ts b/extensions/xiaomi/provider-catalog.ts
 index 92941caea7..2ff873b55a 100644
 --- a/extensions/xiaomi/provider-catalog.ts
