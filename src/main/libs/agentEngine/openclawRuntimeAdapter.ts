@@ -3278,6 +3278,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.emitSessionStatus(sessionId, 'running');
     }
     if (phase === AgentLifecyclePhase.End) {
+      // Detect announce completion — mark subagent done and skip parent turn
+      // lifecycle handling (announce is an embedded run, not the parent's end).
+      if (eventRunId && this.tryMarkSubagentDoneFromAnnounceRunId(eventRunId)) {
+        return;
+      }
       const endingTurn = this.activeTurns.get(sessionId);
       const endingRunId = eventRunId
         ?? endingTurn?.runId
@@ -3706,6 +3711,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  /**
+   * Detects announce-style runIds that signal subagent completion.
+   * Announce runIds follow the pattern: announce:v<N>:agent:<parent>:subagent:<uuid>:<runUuid>
+   * Returns true if the runId was an announce pattern (even if no matching subagent was found).
+   */
+  private tryMarkSubagentDoneFromAnnounceRunId(runId: string): boolean {
+    const match = runId.match(/^announce:.*:subagent:([0-9a-f-]+)/i);
+    if (!match) return false;
+    const subagentUuid = match[1];
+    for (const [agentId, sessionKey] of this.subagentSessionKeys) {
+      if (sessionKey.includes(subagentUuid)) {
+        if (this.subagentStatus.get(agentId) !== 'done') {
+          this.subagentStatus.set(agentId, 'done');
+          this.store.updateSubagentRunStatus(agentId, 'done', Date.now());
+          console.log('[OpenClawRuntime] marked subagent as done via announce:', agentId);
+        }
+        return true;
+      }
+    }
+    console.debug('[OpenClawRuntime] announce runId detected but no matching subagent:', runId);
+    return true;
+  }
+
   private handleChatEvent(payload: unknown, seq?: number): void {
     if (!isRecord(payload)) return;
     const chatPayload = payload as ChatEventPayload;
@@ -3764,6 +3792,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (state === 'final') {
       this.cancelLifecycleEndFallback(sessionId, turn, 'chat final arrived');
+      // Detect announce chat final — mark subagent done as backup
+      if (runId) {
+        this.tryMarkSubagentDoneFromAnnounceRunId(runId);
+      }
       this.handleChatFinal(sessionId, turn, chatPayload);
       return;
     }
@@ -5965,8 +5997,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.subagentMessages.set(agentId, messages);
 
       // Update status if we got messages and the session appears done
-      if (messages.length > 0 && !this.subagentStatus.has(agentId)) {
+      if (messages.length > 0 && this.subagentStatus.get(agentId) !== 'done') {
         this.subagentStatus.set(agentId, 'done');
+        this.store.updateSubagentRunStatus(agentId, 'done', Date.now());
+        console.log('[OpenClawRuntime] marked subagent as done via history fallback:', agentId);
       }
 
       console.log('[OpenClawRuntime] fetchSubagentHistory: extracted', messages.length, 'display messages for agentId:', agentId);
