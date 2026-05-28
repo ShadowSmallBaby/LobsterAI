@@ -1,9 +1,11 @@
 import { ArrowDownTrayIcon, ArrowLeftIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useDispatch } from 'react-redux';
 
 import { i18nService } from '../../services/i18n';
 import { kitService } from '../../services/kit';
 import { resolveLocalizedText } from '../../services/skill';
+import { setInstalledKits as setInstalledKitsAction, setMarketplaceKits } from '../../store/slices/kitSlice';
 import type { InstalledKit, MarketplaceKit } from '../../types/kit';
 import Modal from '../common/Modal';
 import SearchIcon from '../icons/SearchIcon';
@@ -15,6 +17,7 @@ interface KitsManagerProps {
 }
 
 const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
+  const dispatch = useDispatch();
   const [kits, setKits] = useState<MarketplaceKit[]>([]);
   const [installedKits, setInstalledKits] = useState<Record<string, InstalledKit>>({});
   const [isLoading, setIsLoading] = useState(false);
@@ -32,8 +35,10 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
     ]);
     setKits(marketKits);
     setInstalledKits(installed);
+    dispatch(setMarketplaceKits(marketKits));
+    dispatch(setInstalledKitsAction(installed));
     setIsLoading(false);
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     loadData();
@@ -61,6 +66,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
       if (result.success) {
         const installed = await kitService.getInstalledKits();
         setInstalledKits(installed);
+        dispatch(setInstalledKitsAction(installed));
       } else {
         console.error('[KitsManager] Install failed:', result.error);
       }
@@ -78,6 +84,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
       if (result.success) {
         const installed = await kitService.getInstalledKits();
         setInstalledKits(installed);
+        dispatch(setInstalledKitsAction(installed));
       } else {
         console.error('[KitsManager] Uninstall failed:', result.error);
       }
