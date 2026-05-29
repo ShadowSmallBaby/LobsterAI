@@ -92,6 +92,7 @@ import type {
   TelegramInstanceConfig,
   WecomInstanceConfig,
 } from './im/types';
+import { registerCoworkSubagentHandlers } from './ipcHandlers/coworkSubagent';
 import { registerKitHandlers } from './ipcHandlers/kits';
 import { registerNimQrLoginHandlers } from './ipcHandlers/nimQrLogin';
 import { registerPluginHandlers } from './ipcHandlers/plugins';
@@ -5575,39 +5576,9 @@ if (!gotTheLock) {
 
   // ── Subagent tracking IPC ──────────────────────────────────────────────
 
-  ipcMain.handle(
-    'cowork:subTask:history',
-    async (
-      _event,
-      options: {
-        parentSessionId: string;
-        agentId: string;
-        sessionKey?: string;
-      },
-    ) => {
-      if (!openClawRuntimeAdapter) {
-        return { success: false, error: 'Runtime adapter not available' };
-      }
-      try {
-        const messages = await openClawRuntimeAdapter.getSubTaskHistory(
-          options.parentSessionId,
-          options.agentId,
-          options.sessionKey,
-        );
-        return { success: true, messages };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch subagent history',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('cowork:subagent:list', async (_event, options: { parentSessionId: string }) => {
-    if (!openClawRuntimeAdapter) return { success: true, runs: [] };
-    const runs = openClawRuntimeAdapter.listSubagentRuns(options.parentSessionId);
-    return { success: true, runs };
+  registerCoworkSubagentHandlers({
+    getOpenClawRuntimeAdapter: () => openClawRuntimeAdapter,
+    getCoworkEngineRouter,
   });
 
   ipcMain.handle('cowork:media:cancel', async (_event, taskId: string) => {

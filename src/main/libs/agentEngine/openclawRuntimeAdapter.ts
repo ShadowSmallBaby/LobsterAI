@@ -6906,6 +6906,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.subagentTracker.getSubTaskHistory(parentSessionId, agentId, sessionKey);
   }
 
+  async deleteSubagentSession(parentSessionId: string, runId: string): Promise<boolean> {
+    return this.subagentTracker.deleteSubagentRun(parentSessionId, runId);
+  }
+
   /**
    * Called when a session is deleted from the store.
    * Purges all in-memory references so that new channel messages

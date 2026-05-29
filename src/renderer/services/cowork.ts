@@ -759,6 +759,19 @@ class CoworkService {
     return false;
   }
 
+  async deleteSubagentSession(parentSessionId: string, runId: string): Promise<boolean> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.deleteSubagentSession) return false;
+
+    const result = await cowork.deleteSubagentSession({ parentSessionId, runId });
+    if (result.success) {
+      return result.deleted ?? true;
+    }
+
+    console.error('Failed to delete subagent session:', result.error);
+    return false;
+  }
+
   async setSessionPinned(sessionId: string, pinned: boolean): Promise<{ success: boolean; pinOrder: number | null }> {
     const cowork = window.electron?.cowork;
     if (!cowork?.setSessionPinned) return { success: false, pinOrder: null };
