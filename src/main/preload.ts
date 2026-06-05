@@ -30,6 +30,7 @@ import {
 } from '../shared/localWebServices/constants';
 import { McpIpcChannel } from '../shared/mcp/constants';
 import { OpenClawEngineIpc } from '../shared/openclawEngine/constants';
+import { PermissionIpcChannel } from '../shared/permissions/constants';
 import type { Platform } from '../shared/platform';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
 import { OpenClawSessionIpc } from './openclawSession/constants';
@@ -102,8 +103,8 @@ contextBridge.exposeInMainWorld('electron', {
     listInstalled: () => ipcRenderer.invoke('kits:listInstalled'),
   },
   permissions: {
-    checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),
-    requestCalendar: () => ipcRenderer.invoke('permissions:requestCalendar'),
+    checkCalendar: () => ipcRenderer.invoke(PermissionIpcChannel.CheckCalendar),
+    requestCalendar: () => ipcRenderer.invoke(PermissionIpcChannel.RequestCalendar),
   },
   enterprise: {
     getConfig: () => ipcRenderer.invoke('enterprise:getConfig'),

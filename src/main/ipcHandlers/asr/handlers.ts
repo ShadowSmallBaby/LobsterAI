@@ -38,6 +38,7 @@ export function registerAsrIpcHandlers({
         }
 
         const audioBuffer = Buffer.from(audioBase64, 'base64');
+        console.log(`[ASR] submitting voice input audio (${audioBuffer.length} bytes)`);
         const form = new FormData();
         form.append(
           'file',
@@ -62,6 +63,8 @@ export function registerAsrIpcHandlers({
         if (resp.ok && body?.code === 0 && body.data) {
           return { success: true, data: body.data as AsrRecognizeData };
         }
+
+        console.warn(`[ASR] recognition request was rejected with code ${body?.code ?? resp.status} and HTTP status ${resp.status}`);
 
         return {
           success: false,

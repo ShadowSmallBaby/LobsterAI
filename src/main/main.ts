@@ -34,7 +34,6 @@ import { AgentId, AgentIpcChannel } from '../shared/agent/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactBrowserPartition, ArtifactPreviewIpc, ArtifactPreviewProtocol } from '../shared/artifactPreview/constants';
 import { AuthIpcChannel } from '../shared/auth/constants';
-import { canonicalizeMediaModelId, mediaModelDisplayName } from '../shared/mediaModelAliases';
 import {
   type BrowserDiagnosticResultStep,
   BrowserDiagnosticStatus,
@@ -82,6 +81,7 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
+import { canonicalizeMediaModelId, mediaModelDisplayName } from '../shared/mediaModelAliases';
 import {
   OpenClawEngineIpc,
   OpenClawGatewayRepairErrorCode,
@@ -120,6 +120,7 @@ import { registerCoworkSubagentHandlers } from './ipcHandlers/coworkSubagent';
 import { registerKitHandlers } from './ipcHandlers/kits';
 import { registerMcpHandlers } from './ipcHandlers/mcp';
 import { registerNimQrLoginHandlers } from './ipcHandlers/nimQrLogin';
+import { registerPermissionIpcHandlers } from './ipcHandlers/permissions/handlers';
 import { registerPluginHandlers } from './ipcHandlers/plugins';
 import {
   getCronJobService,
@@ -264,6 +265,7 @@ import {
   loadOpenClawSessionPolicyConfig,
   saveOpenClawSessionPolicyConfig,
 } from './openclawSessionPolicy/store';
+import { registerVoiceInputPermissionHandler } from './permissions/voiceInputPermission';
 import { SkillManager } from './skillManager';
 import { getSkillServiceManager } from './skillServices';
 import { SqliteStore } from './sqliteStore';
@@ -1109,108 +1111,6 @@ const normalizeWindowsShellPath = (inputPath: string): string => {
   }
 
   return normalized;
-};
-
-// ==================== macOS Permissions ====================
-
-/**
- * Check calendar permission on macOS by attempting to access Calendar app
- * Returns: 'authorized' | 'denied' | 'restricted' | 'not-determined'
- * On Windows, checks if Outlook is available
- * On Linux, returns 'not-supported'
- */
-const checkCalendarPermission = async (): Promise<string> => {
-  if (process.platform === 'darwin') {
-    try {
-      // Try to access Calendar to check permission
-      const { exec } = require('child_process');
-      const util = require('util');
-      const execAsync = util.promisify(exec);
-
-      // Quick test to see if we can access Calendar
-      await execAsync('osascript -l JavaScript -e \'Application("Calendar").name()\'', {
-        timeout: 5000,
-      });
-      console.log('[Permissions] macOS Calendar access: authorized');
-      return 'authorized';
-    } catch (error: unknown) {
-      const stderr =
-        typeof error === 'object' && error && 'stderr' in error
-          ? String((error as { stderr?: unknown }).stderr ?? '')
-          : '';
-      // Check if it's a permission error
-      if (
-        stderr.includes('不能获取对象') ||
-        stderr.includes('not authorized') ||
-        stderr.includes('Permission denied')
-      ) {
-        console.log('[Permissions] macOS Calendar access: not-determined (needs permission)');
-        return 'not-determined';
-      }
-      console.warn('[Permissions] Failed to check macOS calendar permission:', error);
-      return 'not-determined';
-    }
-  }
-
-  if (process.platform === 'win32') {
-    // Windows doesn't have a system-level calendar permission like macOS
-    // Instead, we check if Outlook is available
-    try {
-      const { exec } = require('child_process');
-      const util = require('util');
-      const execAsync = util.promisify(exec);
-
-      // Check if Outlook COM object is accessible
-      const checkScript = `
-        try {
-          $Outlook = New-Object -ComObject Outlook.Application
-          $Outlook.Version
-        } catch { exit 1 }
-      `;
-      await execAsync('powershell -Command "' + checkScript + '"', { timeout: 10000 });
-      console.log('[Permissions] Windows Outlook is available');
-      return 'authorized';
-    } catch {
-      console.log('[Permissions] Windows Outlook not available or not accessible');
-      return 'not-determined';
-    }
-  }
-
-  return 'not-supported';
-};
-
-/**
- * Request calendar permission on macOS
- * On Windows, attempts to initialize Outlook COM object
- */
-const requestCalendarPermission = async (): Promise<boolean> => {
-  if (process.platform === 'darwin') {
-    try {
-      // On macOS, we trigger permission by trying to access Calendar
-      // The system will show permission dialog if needed
-      const { exec } = require('child_process');
-      const util = require('util');
-      const execAsync = util.promisify(exec);
-
-      await execAsync(
-        'osascript -l JavaScript -e \'Application("Calendar").calendars()[0].name()\'',
-        { timeout: 10000 },
-      );
-      return true;
-    } catch (error) {
-      console.warn('[Permissions] Failed to request macOS calendar permission:', error);
-      return false;
-    }
-  }
-
-  if (process.platform === 'win32') {
-    // Windows doesn't have a permission dialog for COM objects
-    // We just check if Outlook is available
-    const status = await checkCalendarPermission();
-    return status === 'authorized';
-  }
-
-  return false;
 };
 
 // 配置应用
@@ -6563,53 +6463,7 @@ if (!gotTheLock) {
     pollNimQrLogin,
   });
 
-  // ==================== Permissions IPC Handlers ====================
-
-  ipcMain.handle('permissions:checkCalendar', async () => {
-    try {
-      const status = await checkCalendarPermission();
-
-      // Development mode: Auto-request permission if not determined
-      // This provides a better dev experience without affecting production
-      if (isDev && status === 'not-determined' && process.platform === 'darwin') {
-        console.log('[Permissions] Development mode: Auto-requesting calendar permission...');
-        try {
-          await requestCalendarPermission();
-          const newStatus = await checkCalendarPermission();
-          console.log(
-            '[Permissions] Development mode: Permission status after request:',
-            newStatus,
-          );
-          return { success: true, status: newStatus, autoRequested: true };
-        } catch (requestError) {
-          console.warn('[Permissions] Development mode: Auto-request failed:', requestError);
-        }
-      }
-
-      return { success: true, status };
-    } catch (error) {
-      console.error('[Main] Error checking calendar permission:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to check permission',
-      };
-    }
-  });
-
-  ipcMain.handle('permissions:requestCalendar', async () => {
-    try {
-      // Request permission and check status
-      const granted = await requestCalendarPermission();
-      const status = await checkCalendarPermission();
-      return { success: true, granted, status };
-    } catch (error) {
-      console.error('[Main] Error requesting calendar permission:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to request permission',
-      };
-    }
-  });
+  registerPermissionIpcHandlers({ ipcMain, isDev });
 
   // ==================== IM Gateway IPC Handlers ====================
 
@@ -9444,6 +9298,12 @@ if (!gotTheLock) {
     // sees the loading UI within ~1-2 s instead of waiting for the full
     // skill bootstrap (~6-8 s previously).
     setContentSecurityPolicy();
+    registerVoiceInputPermissionHandler({
+      session: session.defaultSession,
+      getMainWindow: () => mainWindow,
+      isDev,
+      startUrl: process.env.ELECTRON_START_URL,
+    });
 
     profiler.mark('createWindow');
     console.log('[Main] initApp: creating window');
