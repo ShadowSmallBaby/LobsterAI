@@ -80,6 +80,18 @@ const waitForNextPaint = (): Promise<void> => new Promise(resolve => {
   });
 });
 
+const formatBackupSize = (sizeBytes?: number): string => {
+  if (!Number.isFinite(sizeBytes) || !sizeBytes || sizeBytes <= 0) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = sizeBytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+};
+
 const normalizeProvidersForSettingsSave = (providers: ProvidersConfig): ProvidersConfig => (
   Object.fromEntries(
     Object.entries(providers).map(([providerKey, providerConfig]) => {
@@ -1016,6 +1028,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [openClawGatewayCopied, setOpenClawGatewayCopied] = useState<boolean>(false);
   const [isBackingUpOpenClawData, setIsBackingUpOpenClawData] = useState<boolean>(false);
   const [isRestoringOpenClawData, setIsRestoringOpenClawData] = useState<boolean>(false);
+  const [openClawDataBackupResult, setOpenClawDataBackupResult] = useState<{ path: string; sizeBytes?: number } | null>(null);
   const [showOpenClawDataRestoreConfirm, setShowOpenClawDataRestoreConfirm] = useState<boolean>(false);
 
   useEffect(() => {
@@ -1978,6 +1991,19 @@ const Settings: React.FC<SettingsProps> = ({
     }
   }, [openClawRepairResult?.backupPath]);
 
+  const handleRevealOpenClawDataBackup = useCallback(async () => {
+    const backupPath = openClawDataBackupResult?.path;
+    if (!backupPath) return;
+    try {
+      const result = await window.electron.shell.showItemInFolder(backupPath);
+      if (!result?.success) {
+        setError(result?.error || i18nService.t('showInFolderFailed'));
+      }
+    } catch (revealError) {
+      setError(revealError instanceof Error ? revealError.message : i18nService.t('showInFolderFailed'));
+    }
+  }, [openClawDataBackupResult?.path]);
+
   const persistModelSettingsBeforeDataBackup = useCallback(async () => {
     const normalizedProviders = normalizeProvidersForSettingsSave(providers);
     const primaryProvider = resolvePrimaryProviderForSettingsSave(normalizedProviders, activeProvider);
@@ -1994,6 +2020,7 @@ const Settings: React.FC<SettingsProps> = ({
     if (isBackingUpOpenClawData) return;
     setError(null);
     setNoticeMessage(null);
+    setOpenClawDataBackupResult(null);
     setIsBackingUpOpenClawData(true);
     try {
       await waitForNextPaint();
@@ -2007,10 +2034,7 @@ const Settings: React.FC<SettingsProps> = ({
         return;
       }
       if (result.path) {
-        const revealResult = await window.electron.shell.showItemInFolder(result.path);
-        if (!revealResult?.success) {
-          setError(revealResult?.error || i18nService.t('showInFolderFailed'));
-        }
+        setOpenClawDataBackupResult({ path: result.path, sizeBytes: result.sizeBytes });
       }
       setNoticeMessage(i18nService.t('openClawDataBackupSuccess'));
     } catch (backupError) {
@@ -3548,6 +3572,31 @@ const Settings: React.FC<SettingsProps> = ({
                           : i18nService.t('openClawRepairConfirmAction')}
                       </button>
                     </div>
+
+                    {openClawDataBackupResult && (
+                      <div className="flex flex-col gap-3 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0 space-y-1">
+                          <div className="font-medium text-foreground">
+                            {i18nService.t('openClawDataBackupSavedTitle')}
+                          </div>
+                          <div className="break-all font-mono text-xs leading-5 text-secondary">
+                            {openClawDataBackupResult.path}
+                          </div>
+                          {formatBackupSize(openClawDataBackupResult.sizeBytes) && (
+                            <div className="text-xs text-secondary">
+                              {i18nService.t('openClawDataBackupSize')}: {formatBackupSize(openClawDataBackupResult.sizeBytes)}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { void handleRevealOpenClawDataBackup(); }}
+                          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised active:scale-[0.98]"
+                        >
+                          {i18nService.t('showInFolder')}
+                        </button>
+                      </div>
+                    )}
 
                     <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex min-w-0 items-start gap-3">

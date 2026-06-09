@@ -4857,6 +4857,12 @@ if (!gotTheLock) {
       }
 
       const outputPath = ensureTarGzFileName(saveResult.filePath);
+      if (hasActiveGatewayWorkloads()) {
+        return {
+          success: false,
+          error: t('dataMigrationBackupBlockedByActiveWorkloads'),
+        };
+      }
       const backupManager = sqliteBackupManager ?? new SqliteBackupManager(app.getPath('userData'));
       const sqliteRecord = await backupManager.createBackup({
         db: getStore().getDatabase(),
@@ -4899,7 +4905,7 @@ if (!gotTheLock) {
         title: t('dataMigrationRestoreDialogTitle'),
         properties: ['openFile'] as 'openFile'[],
         filters: [
-          { name: t('dataMigrationBackupArchiveFilter'), extensions: ['gz', 'tgz', 'tar'] },
+          { name: t('dataMigrationBackupArchiveFilter'), extensions: ['gz', 'tgz'] },
           { name: t('dataMigrationAllFilesFilter'), extensions: ['*'] },
         ],
       };
@@ -4924,13 +4930,16 @@ if (!gotTheLock) {
         archivePath,
       });
       const success = restoreResult?.status === DataMigrationRestoreStatus.Success;
-      setTimeout(() => {
-        app.relaunch();
-        app.exit(0);
-      }, 100);
+      if (success) {
+        setTimeout(() => {
+          app.relaunch();
+          app.exit(0);
+        }, 100);
+      }
       return {
         success,
-        scheduledRestart: true,
+        scheduledRestart: success,
+        rollbackPath: restoreResult?.rollbackPath,
         error: success ? undefined : restoreResult?.error || 'Failed to import LobsterAI data backup',
       };
     } catch (error) {

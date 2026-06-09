@@ -13,11 +13,10 @@ import { APP_NAME, DB_FILENAME } from '../../appConstants';
 import { SQLITE_BACKUP_DIR_NAME } from '../sqliteBackup/constants';
 
 const CURRENT_ARCHIVE_ROOT = APP_NAME;
-const LEGACY_WINDOWS_ARCHIVE_ROOT = 'AppData/Roaming/LobsterAI';
 const MANIFEST_FILE_NAME = '.lobsterai-migration.json';
 const PENDING_RESTORE_FILE_NAME = '.lobsterai-data-migration-restore-pending.json';
 const LAST_RESTORE_RESULT_FILE_NAME = '.lobsterai-data-migration-restore-result.json';
-const ARCHIVE_FORMAT = 'lobsterai-user-data';
+const ARCHIVE_FORMAT = 'lobsterai-data-migration';
 const ARCHIVE_FORMAT_VERSION = 1;
 const SQLITE_BACKUP_TOP_LEVEL_DIR_NAME = SQLITE_BACKUP_DIR_NAME.split('/')[0] || 'backups';
 const SQLITE_RESTORE_FILE_NAMES = [
@@ -48,6 +47,9 @@ const SQLITE_MIGRATION_TABLES = [
   'subagent_messages',
   'im_config',
   'im_session_mappings',
+  'scheduled_task_meta',
+  'scheduled_tasks',
+  'scheduled_task_runs',
 ] as const;
 
 const SQLITE_MIGRATION_KV_KEYS = [
@@ -58,6 +60,22 @@ const SQLITE_MIGRATION_KV_KEYS = [
   'openclaw_session_policy',
   'installation_uuid',
 ] as const;
+
+const SQLITE_CRITICAL_CONTENT_TABLES = [
+  ...SQLITE_MIGRATION_TABLES,
+] as const;
+
+const OPENCLAW_STATE_RELATIVE_PATH = 'openclaw/state';
+
+const OPENCLAW_STATE_SUMMARY_EXCLUDED_SEGMENTS = new Set([
+  '.compile-cache',
+  'bin',
+]);
+
+const OPENCLAW_STATE_SUMMARY_EXCLUDED_FILE_NAMES = new Set([
+  'gateway-port.json',
+  'gateway-token',
+]);
 
 const SOURCE_EXCLUDED_TOP_LEVEL_NAMES = new Set([
   'Cache',
@@ -136,14 +154,25 @@ export interface CreateMigrationArchiveResult {
 export interface MigrationArchiveInfo {
   archivePath: string;
   root: string;
-  rootKind: 'current' | 'legacy-windows';
   entryCount: number;
   hasSqliteDatabase: boolean;
+  hasManifest: boolean;
 }
 
 interface InspectMigrationArchiveOptions {
   requireSqliteDatabase?: boolean;
   validateSqliteDatabase?: boolean;
+  requireManifest?: boolean;
+  validateManifest?: boolean;
+}
+
+interface MigrationManifest {
+  format?: string;
+  version?: number;
+  archiveRoot?: string;
+  archiveKind?: DataMigrationArchiveKind;
+  sqlite?: SqliteMigrationSummary;
+  openclawState?: OpenClawStateMigrationSummary;
 }
 
 export interface PendingDataMigrationRestoreRequest {
@@ -166,14 +195,35 @@ interface SqliteMigrationSummary {
   sizeBytes?: number;
   checksumSha256?: string;
   quickCheck?: string;
+  tableNames?: string[];
   rowCounts?: Record<string, number>;
+  tableContentChecksums?: Record<string, string>;
   kvKeys?: string[];
+  kvValueChecksums?: Record<string, string>;
+  appConfigChecksumSha256?: string;
+  primaryApiKeyPresent?: boolean;
   agentIds?: string[];
   sessionCountsByAgentId?: Record<string, number>;
   providerKeys?: string[];
   enabledProviderKeys?: string[];
   providerKeysWithApiKey?: string[];
   customProviderKeys?: string[];
+  imConfigKeys?: string[];
+  imConfigValueChecksums?: Record<string, string>;
+  scheduledTaskMetaIds?: string[];
+  error?: string;
+}
+
+interface OpenClawStateMigrationSummary {
+  exists: boolean;
+  fileCount?: number;
+  totalSizeBytes?: number;
+  checksumSha256?: string;
+  cronFileCount?: number;
+  cronRunFileCount?: number;
+  agentSessionFileCount?: number;
+  openclawConfigExists?: boolean;
+  sampledRelativePaths?: string[];
   error?: string;
 }
 
@@ -194,6 +244,9 @@ export const ensureTarGzFileName = (filePath: string): string => {
   const trimmed = filePath.trim();
   return /\.tar\.gz$/i.test(trimmed) ? trimmed : `${trimmed}.tar.gz`;
 };
+
+const isSupportedMigrationArchivePath = (filePath: string): boolean =>
+  /\.tar\.gz$/i.test(filePath) || /\.tgz$/i.test(filePath);
 
 export const getPendingRestoreRequestPath = (userDataPath: string): string =>
   path.join(userDataPath, PENDING_RESTORE_FILE_NAME);
@@ -412,10 +465,97 @@ const tableExists = (db: Database.Database, tableName: string): boolean => {
   return Boolean(row);
 };
 
+const quoteSqliteIdentifier = (identifier: string): string => `"${identifier.replace(/"/g, '""')}"`;
+
 const getTableColumns = (db: Database.Database, tableName: string): string[] => (
-  (db.pragma(`table_info(${JSON.stringify(tableName)})`) as Array<{ name: string }>)
+  (db.pragma(`table_info(${quoteSqliteIdentifier(tableName)})`) as Array<{ name: string }>)
     .map(column => column.name)
 );
+
+const readApplicationTableNames = (db: Database.Database): string[] => (
+  (db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name NOT LIKE 'sqlite_%'
+    ORDER BY name
+  `).all() as Array<{ name: string }>)
+    .map(row => row.name)
+    .filter(name => name.trim().length > 0)
+);
+
+const normalizeSqliteValueForHash = (value: unknown): unknown => {
+  if (Buffer.isBuffer(value)) {
+    return {
+      type: 'buffer',
+      sha256: crypto.createHash('sha256').update(value).digest('hex'),
+      sizeBytes: value.length,
+    };
+  }
+  return value;
+};
+
+const computeTableContentChecksum = (db: Database.Database, tableName: string): string | undefined => {
+  if (!tableExists(db, tableName)) return undefined;
+  const columns = getTableColumns(db, tableName);
+  if (columns.length === 0) return undefined;
+
+  const rows = db
+    .prepare(`SELECT ${columns.map(quoteSqliteIdentifier).join(', ')} FROM ${quoteSqliteIdentifier(tableName)}`)
+    .all() as Array<Record<string, unknown>>;
+  const serializedRows = rows
+    .map(row => JSON.stringify(columns.map(column => normalizeSqliteValueForHash(row[column]))))
+    .sort();
+
+  const hash = crypto.createHash('sha256');
+  hash.update(tableName);
+  hash.update('\0');
+  hash.update(columns.join('\0'));
+  hash.update('\0');
+  for (const row of serializedRows) {
+    hash.update(row);
+    hash.update('\n');
+  }
+  return hash.digest('hex');
+};
+
+const readTableRowCounts = (
+  db: Database.Database,
+  tableNames: readonly string[],
+): Record<string, number> => {
+  const rowCounts: Record<string, number> = {};
+  for (const tableName of tableNames) {
+    const count = db
+      .prepare(`SELECT COUNT(*) FROM ${quoteSqliteIdentifier(tableName)}`)
+      .pluck()
+      .get() as number;
+    rowCounts[tableName] = Number(count) || 0;
+  }
+  return rowCounts;
+};
+
+const readTableContentChecksums = (db: Database.Database): Record<string, string> => {
+  const checksums: Record<string, string> = {};
+  for (const tableName of SQLITE_CRITICAL_CONTENT_TABLES) {
+    const checksum = computeTableContentChecksum(db, tableName);
+    if (checksum) {
+      checksums[tableName] = checksum;
+    }
+  }
+  return checksums;
+};
+
+const readKvValueChecksums = (db: Database.Database): Record<string, string> => {
+  if (!tableExists(db, 'kv')) return {};
+  const rows = db
+    .prepare(`SELECT key, value FROM kv WHERE key IN (${SQLITE_MIGRATION_KV_KEYS.map(() => '?').join(', ')})`)
+    .all(...SQLITE_MIGRATION_KV_KEYS) as Array<{ key: string; value: string }>;
+  return Object.fromEntries(
+    rows
+      .sort((left, right) => left.key.localeCompare(right.key))
+      .map(row => [row.key, crypto.createHash('sha256').update(row.value).digest('hex')]),
+  );
+};
 
 const readAgentIds = (db: Database.Database): string[] => {
   if (!tableExists(db, 'agents')) return [];
@@ -446,10 +586,16 @@ const readAppConfigProviderSummary = (
   db: Database.Database,
 ): Pick<
   SqliteMigrationSummary,
-  'providerKeys' | 'enabledProviderKeys' | 'providerKeysWithApiKey' | 'customProviderKeys'
+  | 'appConfigChecksumSha256'
+  | 'primaryApiKeyPresent'
+  | 'providerKeys'
+  | 'enabledProviderKeys'
+  | 'providerKeysWithApiKey'
+  | 'customProviderKeys'
 > => {
   if (!tableExists(db, 'kv')) {
     return {
+      primaryApiKeyPresent: false,
       providerKeys: [],
       enabledProviderKeys: [],
       providerKeysWithApiKey: [],
@@ -462,6 +608,7 @@ const readAppConfigProviderSummary = (
     | undefined;
   if (!row?.value) {
     return {
+      primaryApiKeyPresent: false,
       providerKeys: [],
       enabledProviderKeys: [],
       providerKeysWithApiKey: [],
@@ -471,6 +618,7 @@ const readAppConfigProviderSummary = (
 
   try {
     const config = JSON.parse(row.value) as {
+      api?: { key?: string };
       providers?: Record<string, { enabled?: boolean; apiKey?: string }>;
     };
     const providers = config.providers && typeof config.providers === 'object'
@@ -478,6 +626,8 @@ const readAppConfigProviderSummary = (
       : {};
     const providerKeys = Object.keys(providers).sort();
     return {
+      appConfigChecksumSha256: crypto.createHash('sha256').update(row.value).digest('hex'),
+      primaryApiKeyPresent: typeof config.api?.key === 'string' && config.api.key.trim().length > 0,
       providerKeys,
       enabledProviderKeys: providerKeys
         .filter(key => providers[key]?.enabled === true)
@@ -491,12 +641,41 @@ const readAppConfigProviderSummary = (
     };
   } catch {
     return {
+      appConfigChecksumSha256: crypto.createHash('sha256').update(row.value).digest('hex'),
+      primaryApiKeyPresent: false,
       providerKeys: [],
       enabledProviderKeys: [],
       providerKeysWithApiKey: [],
       customProviderKeys: [],
     };
   }
+};
+
+const readImConfigSummary = (
+  db: Database.Database,
+): Pick<SqliteMigrationSummary, 'imConfigKeys' | 'imConfigValueChecksums'> => {
+  if (!tableExists(db, 'im_config')) {
+    return { imConfigKeys: [], imConfigValueChecksums: {} };
+  }
+  const rows = db
+    .prepare('SELECT key, value FROM im_config ORDER BY key')
+    .all() as Array<{ key: string; value?: string | null }>;
+  return {
+    imConfigKeys: rows.map(row => row.key),
+    imConfigValueChecksums: Object.fromEntries(
+      rows.map(row => [
+        row.key,
+        crypto.createHash('sha256').update(row.value ?? '').digest('hex'),
+      ]),
+    ),
+  };
+};
+
+const readScheduledTaskMetaIds = (db: Database.Database): string[] => {
+  if (!tableExists(db, 'scheduled_task_meta')) return [];
+  return (db.prepare('SELECT task_id FROM scheduled_task_meta ORDER BY task_id').all() as Array<{ task_id: string }>)
+    .map(row => row.task_id)
+    .filter(id => id.trim().length > 0);
 };
 
 const readSqliteMigrationSummarySync = (dbPath: string): SqliteMigrationSummary => {
@@ -506,12 +685,8 @@ const readSqliteMigrationSummarySync = (dbPath: string): SqliteMigrationSummary 
   try {
     db = new Database(dbPath, { readonly: true, fileMustExist: true });
     const quickCheck = String(db.prepare('PRAGMA quick_check').pluck().get() ?? '');
-    const rowCounts: Record<string, number> = {};
-    for (const tableName of SQLITE_MIGRATION_TABLES) {
-      if (!tableExists(db, tableName)) continue;
-      const count = db.prepare(`SELECT COUNT(*) FROM "${tableName}"`).pluck().get() as number;
-      rowCounts[tableName] = Number(count) || 0;
-    }
+    const tableNames = readApplicationTableNames(db);
+    const rowCounts = readTableRowCounts(db, tableNames);
 
     const kvKeys = tableExists(db, 'kv')
       ? SQLITE_MIGRATION_KV_KEYS.filter((key) => {
@@ -520,17 +695,23 @@ const readSqliteMigrationSummarySync = (dbPath: string): SqliteMigrationSummary 
       })
       : [];
     const providerSummary = readAppConfigProviderSummary(db);
+    const imConfigSummary = readImConfigSummary(db);
 
     return {
       exists: true,
       sizeBytes: stat.size,
       checksumSha256: computeFileSha256Sync(dbPath),
       quickCheck,
+      tableNames,
       rowCounts,
+      tableContentChecksums: readTableContentChecksums(db),
       kvKeys,
+      kvValueChecksums: readKvValueChecksums(db),
       agentIds: readAgentIds(db),
       sessionCountsByAgentId: readSessionCountsByAgentId(db),
+      scheduledTaskMetaIds: readScheduledTaskMetaIds(db),
       ...providerSummary,
+      ...imConfigSummary,
     };
   } catch (error) {
     return {
@@ -571,12 +752,30 @@ const recordsEqual = (
     && leftKeys.every(key => left[key] === right[key]);
 };
 
+const stringRecordsEqual = (
+  left: Record<string, string> = {},
+  right: Record<string, string> = {},
+): boolean => {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return arraysEqual(leftKeys, rightKeys)
+    && leftKeys.every(key => left[key] === right[key]);
+};
+
 const assertStringArraySummaryFieldMatches = (
   sourceSummary: SqliteMigrationSummary,
   targetSummary: SqliteMigrationSummary,
   fieldName: keyof Pick<
     SqliteMigrationSummary,
-    'agentIds' | 'providerKeys' | 'enabledProviderKeys' | 'providerKeysWithApiKey' | 'customProviderKeys'
+    | 'tableNames'
+    | 'kvKeys'
+    | 'agentIds'
+    | 'providerKeys'
+    | 'enabledProviderKeys'
+    | 'providerKeysWithApiKey'
+    | 'customProviderKeys'
+    | 'imConfigKeys'
+    | 'scheduledTaskMetaIds'
   >,
   label: string,
 ): void => {
@@ -595,13 +794,43 @@ const assertSqliteCriticalSummaryMatches = (
   label: string,
 ): void => {
   for (const fieldName of [
+    'tableNames',
+    'kvKeys',
     'agentIds',
     'providerKeys',
     'enabledProviderKeys',
     'providerKeysWithApiKey',
     'customProviderKeys',
+    'imConfigKeys',
+    'scheduledTaskMetaIds',
   ] as const) {
     assertStringArraySummaryFieldMatches(sourceSummary, targetSummary, fieldName, label);
+  }
+
+  if (!recordsEqual(sourceSummary.rowCounts, targetSummary.rowCounts)) {
+    throw new Error(
+      `${label} rowCounts mismatch: expected ${JSON.stringify(sourceSummary.rowCounts ?? {})}, got ${JSON.stringify(targetSummary.rowCounts ?? {})}.`,
+    );
+  }
+
+  if (!stringRecordsEqual(sourceSummary.tableContentChecksums, targetSummary.tableContentChecksums)) {
+    throw new Error(`${label} tableContentChecksums mismatch.`);
+  }
+
+  if (!stringRecordsEqual(sourceSummary.kvValueChecksums, targetSummary.kvValueChecksums)) {
+    throw new Error(`${label} kvValueChecksums mismatch.`);
+  }
+
+  if (!stringRecordsEqual(sourceSummary.imConfigValueChecksums, targetSummary.imConfigValueChecksums)) {
+    throw new Error(`${label} imConfigValueChecksums mismatch.`);
+  }
+
+  if (sourceSummary.appConfigChecksumSha256 !== targetSummary.appConfigChecksumSha256) {
+    throw new Error(`${label} appConfigChecksumSha256 mismatch.`);
+  }
+
+  if (sourceSummary.primaryApiKeyPresent !== targetSummary.primaryApiKeyPresent) {
+    throw new Error(`${label} primaryApiKeyPresent mismatch.`);
   }
 
   if (!recordsEqual(sourceSummary.sessionCountsByAgentId, targetSummary.sessionCountsByAgentId)) {
@@ -617,16 +846,6 @@ export const assertDataMigrationSqliteSnapshotMatchesLiveSync = (
 ): void => {
   const liveSummary = assertMigrationSqliteReadySync(liveDbPath, 'Live data');
   const snapshotSummary = assertMigrationSqliteReadySync(snapshotDbPath, 'Backup snapshot');
-
-  for (const tableName of SQLITE_MIGRATION_TABLES) {
-    const liveCount = liveSummary.rowCounts?.[tableName] ?? 0;
-    const snapshotCount = snapshotSummary.rowCounts?.[tableName] ?? 0;
-    if (liveCount !== snapshotCount) {
-      throw new Error(
-        `Backup snapshot row count mismatch for ${tableName}: expected ${liveCount}, got ${snapshotCount}.`,
-      );
-    }
-  }
 
   assertSqliteCriticalSummaryMatches(liveSummary, snapshotSummary, 'Backup snapshot');
 };
@@ -654,7 +873,189 @@ const checkpointSqliteDatabaseSync = (dbPath: string, label: string): void => {
   }
 };
 
-const buildManifest = (input: CreateMigrationArchiveInput): Record<string, unknown> => {
+const toPosixPath = (value: string): string => value.replace(/\\/g, '/');
+
+const shouldExcludeOpenClawStateSummaryPath = (relativePosixPath: string): boolean => {
+  const segments = relativePosixPath.split('/').filter(Boolean);
+  if (segments.some(segment => OPENCLAW_STATE_SUMMARY_EXCLUDED_SEGMENTS.has(segment))) {
+    return true;
+  }
+  const fileName = segments[segments.length - 1] ?? '';
+  return OPENCLAW_STATE_SUMMARY_EXCLUDED_FILE_NAMES.has(fileName);
+};
+
+const readOpenClawStateMigrationSummarySync = (userDataPath: string): OpenClawStateMigrationSummary => {
+  const stateRoot = path.join(userDataPath, ...OPENCLAW_STATE_RELATIVE_PATH.split('/'));
+  if (!fs.existsSync(stateRoot)) return { exists: false };
+  if (!fs.statSync(stateRoot).isDirectory()) {
+    return { exists: false, error: `${OPENCLAW_STATE_RELATIVE_PATH} is not a directory` };
+  }
+
+  try {
+    const files: Array<{ relativePath: string; absolutePath: string; sizeBytes: number }> = [];
+    const visit = (dirPath: string): void => {
+      for (const entryName of fs.readdirSync(dirPath)) {
+        const absolutePath = path.join(dirPath, entryName);
+        const relativePath = toPosixPath(path.relative(stateRoot, absolutePath));
+        if (!relativePath || shouldExcludeOpenClawStateSummaryPath(relativePath)) continue;
+
+        const stat = fs.lstatSync(absolutePath);
+        if (stat.isSymbolicLink()) continue;
+        if (stat.isDirectory()) {
+          visit(absolutePath);
+          continue;
+        }
+        if (!stat.isFile()) continue;
+        files.push({ relativePath, absolutePath, sizeBytes: stat.size });
+      }
+    };
+    visit(stateRoot);
+    files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+
+    const hash = crypto.createHash('sha256');
+    let totalSizeBytes = 0;
+    for (const file of files) {
+      totalSizeBytes += file.sizeBytes;
+      hash.update(file.relativePath);
+      hash.update('\0');
+      hash.update(String(file.sizeBytes));
+      hash.update('\0');
+      hash.update(fs.readFileSync(file.absolutePath));
+      hash.update('\0');
+    }
+
+    return {
+      exists: true,
+      fileCount: files.length,
+      totalSizeBytes,
+      checksumSha256: hash.digest('hex'),
+      cronFileCount: files.filter(file => file.relativePath === 'cron' || file.relativePath.startsWith('cron/')).length,
+      cronRunFileCount: files.filter(file => file.relativePath.startsWith('cron/runs/')).length,
+      agentSessionFileCount: files.filter(file => file.relativePath.includes('/sessions/')).length,
+      openclawConfigExists: files.some(file => file.relativePath === 'openclaw.json'),
+      sampledRelativePaths: files.slice(0, 50).map(file => file.relativePath),
+    };
+  } catch (error) {
+    return {
+      exists: true,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const assertOpenClawStateSummaryMatches = (
+  sourceUserDataPath: string,
+  targetUserDataPath: string,
+  label: string,
+): void => {
+  const sourceSummary = readOpenClawStateMigrationSummarySync(sourceUserDataPath);
+  const targetSummary = readOpenClawStateMigrationSummarySync(targetUserDataPath);
+
+  assertOpenClawStateSummaryValuesMatch(sourceSummary, targetSummary, label);
+};
+
+const assertOpenClawStateSummaryValuesMatch = (
+  sourceSummary: OpenClawStateMigrationSummary,
+  targetSummary: OpenClawStateMigrationSummary,
+  label: string,
+): void => {
+  if (sourceSummary.error || targetSummary.error) {
+    throw new Error(
+      `${label} OpenClaw state summary failed: ${sourceSummary.error || targetSummary.error}`,
+    );
+  }
+  for (const fieldName of [
+    'exists',
+    'fileCount',
+    'totalSizeBytes',
+    'checksumSha256',
+    'cronFileCount',
+    'cronRunFileCount',
+    'agentSessionFileCount',
+    'openclawConfigExists',
+  ] as const) {
+    if (sourceSummary[fieldName] !== targetSummary[fieldName]) {
+      throw new Error(
+        `${label} OpenClaw state ${fieldName} mismatch: expected ${String(sourceSummary[fieldName])}, got ${String(targetSummary[fieldName])}.`,
+      );
+    }
+  }
+};
+
+const readMigrationManifestSync = (sourceRoot: string): MigrationManifest => {
+  const manifestPath = path.join(sourceRoot, MANIFEST_FILE_NAME);
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`Backup archive is missing ${MANIFEST_FILE_NAME}.`);
+  }
+  let manifest: MigrationManifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as MigrationManifest;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Backup archive contains an unreadable ${MANIFEST_FILE_NAME}: ${message}`);
+  }
+
+  if (manifest.format !== ARCHIVE_FORMAT) {
+    throw new Error(`Backup archive manifest format is unsupported: ${manifest.format || 'missing'}.`);
+  }
+  if (manifest.version !== ARCHIVE_FORMAT_VERSION) {
+    throw new Error(`Backup archive manifest version is unsupported: ${String(manifest.version ?? 'missing')}.`);
+  }
+  if (manifest.archiveRoot !== CURRENT_ARCHIVE_ROOT) {
+    throw new Error(`Backup archive manifest root is unsupported: ${manifest.archiveRoot || 'missing'}.`);
+  }
+  return manifest;
+};
+
+const assertManifestSqliteSummaryMatches = (
+  manifestSummary: SqliteMigrationSummary | undefined,
+  actualSummary: SqliteMigrationSummary,
+  label: string,
+): void => {
+  if (!manifestSummary) {
+    throw new Error(`${label} is missing sqlite summary.`);
+  }
+  if (manifestSummary.exists !== actualSummary.exists) {
+    throw new Error(`${label} sqlite existence mismatch.`);
+  }
+  if (!manifestSummary.exists) {
+    return;
+  }
+  if (manifestSummary.error || actualSummary.error) {
+    throw new Error(`${label} sqlite summary failed: ${manifestSummary.error || actualSummary.error}`);
+  }
+  if (manifestSummary.quickCheck !== actualSummary.quickCheck) {
+    throw new Error(`${label} sqlite quick_check mismatch.`);
+  }
+  if (manifestSummary.sizeBytes !== actualSummary.sizeBytes) {
+    throw new Error(`${label} sqlite sizeBytes mismatch.`);
+  }
+  if (manifestSummary.checksumSha256 !== actualSummary.checksumSha256) {
+    throw new Error(`${label} sqlite checksum mismatch.`);
+  }
+  assertSqliteCriticalSummaryMatches(manifestSummary, actualSummary, label);
+};
+
+const validateExtractedArchiveContentSync = (sourceRoot: string): MigrationManifest => {
+  const manifest = readMigrationManifestSync(sourceRoot);
+  const sqliteSummary = assertMigrationSqliteReadySync(path.join(sourceRoot, DB_FILENAME), 'Backup archive');
+  assertManifestSqliteSummaryMatches(manifest.sqlite, sqliteSummary, 'Backup archive manifest');
+
+  if (!manifest.openclawState) {
+    throw new Error('Backup archive manifest is missing OpenClaw state summary.');
+  }
+  assertOpenClawStateSummaryValuesMatch(
+    manifest.openclawState,
+    readOpenClawStateMigrationSummarySync(sourceRoot),
+    'Backup archive manifest',
+  );
+  return manifest;
+};
+
+const buildManifest = (
+  input: CreateMigrationArchiveInput,
+  manifestUserDataPath = resolvePath(input.userDataPath),
+): Record<string, unknown> => {
   const now = input.now ?? new Date();
   const archiveKind = input.archiveKind ?? 'backup';
   const sqliteSourcePath = input.sqliteSnapshotPath
@@ -672,6 +1073,7 @@ const buildManifest = (input: CreateMigrationArchiveInput): Record<string, unkno
     includesWorkingDirectories: false,
     ...getExclusionManifestFields(archiveKind),
     sqlite: readSqliteMigrationSummarySync(sqliteSourcePath),
+    openclawState: readOpenClawStateMigrationSummarySync(manifestUserDataPath),
   };
 };
 
@@ -703,9 +1105,10 @@ export const createMigrationArchiveSync = (
 
     if (archiveKind !== 'rollback') {
       assertMigrationSqliteReadySync(path.join(stageUserDataRoot, DB_FILENAME), 'Backup staging');
+      assertOpenClawStateSummaryMatches(userDataPath, stageUserDataRoot, 'Backup staging');
     }
 
-    writeJsonSync(path.join(stageUserDataRoot, MANIFEST_FILE_NAME), buildManifest(input));
+    writeJsonSync(path.join(stageUserDataRoot, MANIFEST_FILE_NAME), buildManifest(input, stageUserDataRoot));
 
     ensureDirSync(path.dirname(outputPath));
     tar.create({
@@ -715,6 +1118,10 @@ export const createMigrationArchiveSync = (
       cwd: stageParent,
       portable: true,
     }, [CURRENT_ARCHIVE_ROOT]);
+
+    if (archiveKind !== 'rollback') {
+      inspectMigrationArchiveSync(outputPath);
+    }
 
     return {
       outputPath,
@@ -751,15 +1158,9 @@ const assertSafeArchiveEntryPath = (entryPath: string): string => {
   return normalized;
 };
 
-const resolveArchiveRoot = (entryPath: string): Pick<MigrationArchiveInfo, 'root' | 'rootKind'> | null => {
+const resolveArchiveRoot = (entryPath: string): Pick<MigrationArchiveInfo, 'root'> | null => {
   if (entryPath === CURRENT_ARCHIVE_ROOT || entryPath.startsWith(`${CURRENT_ARCHIVE_ROOT}/`)) {
-    return { root: CURRENT_ARCHIVE_ROOT, rootKind: 'current' };
-  }
-  if (
-    entryPath === LEGACY_WINDOWS_ARCHIVE_ROOT
-    || entryPath.startsWith(`${LEGACY_WINDOWS_ARCHIVE_ROOT}/`)
-  ) {
-    return { root: LEGACY_WINDOWS_ARCHIVE_ROOT, rootKind: 'legacy-windows' };
+    return { root: CURRENT_ARCHIVE_ROOT };
   }
   return null;
 };
@@ -768,17 +1169,20 @@ const isArchiveSqliteDatabaseEntry = (entryPath: string, root: string): boolean 
   entryPath === `${root}/${DB_FILENAME}`;
 
 const isArchiveRootParentDirectory = (entryPath: string): boolean => (
-  `${LEGACY_WINDOWS_ARCHIVE_ROOT}/`.startsWith(`${entryPath}/`)
-  || `${CURRENT_ARCHIVE_ROOT}/`.startsWith(`${entryPath}/`)
+  `${CURRENT_ARCHIVE_ROOT}/`.startsWith(`${entryPath}/`)
 );
+
+const isArchiveManifestEntry = (entryPath: string, root: string): boolean =>
+  entryPath === `${root}/${MANIFEST_FILE_NAME}`;
 
 const inspectArchiveEntry = (
   archivePath: string,
   entry: { path: string; type?: string },
   state: {
-    root: Pick<MigrationArchiveInfo, 'root' | 'rootKind'> | null;
+    root: Pick<MigrationArchiveInfo, 'root'> | null;
     entryCount: number;
     hasSqliteDatabase: boolean;
+    hasManifest: boolean;
   },
 ): void => {
   const normalizedPath = assertSafeArchiveEntryPath(entry.path);
@@ -804,9 +1208,15 @@ const inspectArchiveEntry = (
     }
     state.hasSqliteDatabase = true;
   }
+  if (isArchiveManifestEntry(normalizedPath, root.root)) {
+    if (entry.type && entry.type !== 'File' && entry.type !== 'OldFile') {
+      throw new Error(`Backup archive ${MANIFEST_FILE_NAME} entry is not a file.`);
+    }
+    state.hasManifest = true;
+  }
 };
 
-const validateArchiveSqliteDatabaseSync = (archivePath: string, root: string): void => {
+const validateArchiveContentSync = (archivePath: string, root: string): void => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lobsterai-data-migration-inspect-'));
   try {
     tar.extract({
@@ -820,10 +1230,17 @@ const validateArchiveSqliteDatabaseSync = (archivePath: string, root: string): v
         if ('type' in entry && entry.type && !ALLOWED_ENTRY_TYPES.has(entry.type)) {
           throw new Error(`Backup archive contains an unsupported entry type: ${entry.type}`);
         }
-        return normalizedPath === `${root}/${DB_FILENAME}`;
+        const archiveRoot = resolveArchiveRoot(normalizedPath);
+        const isDirectoryEntry = 'type' in entry
+          ? entry.type === 'Directory'
+          : entry.isDirectory();
+        return Boolean(
+          (archiveRoot && archiveRoot.root === root)
+          || (isDirectoryEntry && isArchiveRootParentDirectory(normalizedPath)),
+        );
       },
     });
-    assertMigrationSqliteReadySync(path.join(tempRoot, ...root.split('/'), DB_FILENAME), 'Backup archive');
+    validateExtractedArchiveContentSync(path.join(tempRoot, ...root.split('/')));
   } finally {
     removeDirIfExistsSync(tempRoot);
   }
@@ -834,16 +1251,23 @@ export const inspectMigrationArchiveSync = (
   options: InspectMigrationArchiveOptions = {},
 ): MigrationArchiveInfo => {
   const resolvedArchivePath = resolvePath(archivePath);
+  if (!isSupportedMigrationArchivePath(resolvedArchivePath)) {
+    throw new Error('Backup archive must be a .tar.gz or .tgz file.');
+  }
   const requireSqliteDatabase = options.requireSqliteDatabase ?? true;
   const validateSqliteDatabase = options.validateSqliteDatabase ?? true;
+  const requireManifest = options.requireManifest ?? true;
+  const validateManifest = options.validateManifest ?? true;
   const state: {
-    root: Pick<MigrationArchiveInfo, 'root' | 'rootKind'> | null;
+    root: Pick<MigrationArchiveInfo, 'root'> | null;
     entryCount: number;
     hasSqliteDatabase: boolean;
+    hasManifest: boolean;
   } = {
     root: null,
     entryCount: 0,
     hasSqliteDatabase: false,
+    hasManifest: false,
   };
 
   tar.list({
@@ -858,16 +1282,22 @@ export const inspectMigrationArchiveSync = (
   if (requireSqliteDatabase && !state.hasSqliteDatabase) {
     throw new Error(`Backup archive is missing ${DB_FILENAME}.`);
   }
-  if (requireSqliteDatabase && validateSqliteDatabase) {
-    validateArchiveSqliteDatabaseSync(resolvedArchivePath, state.root.root);
+  if (requireManifest && !state.hasManifest) {
+    throw new Error(`Backup archive is missing ${MANIFEST_FILE_NAME}.`);
+  }
+  if (
+    (requireSqliteDatabase && validateSqliteDatabase)
+    || (requireManifest && validateManifest)
+  ) {
+    validateArchiveContentSync(resolvedArchivePath, state.root.root);
   }
 
   return {
     archivePath: resolvedArchivePath,
     root: state.root.root,
-    rootKind: state.root.rootKind,
     entryCount: state.entryCount,
     hasSqliteDatabase: state.hasSqliteDatabase,
+    hasManifest: state.hasManifest,
   };
 };
 
@@ -876,11 +1306,17 @@ export const inspectMigrationArchive = async (archivePath: string): Promise<Migr
 
 const extractMigrationArchiveToTempSync = (
   archivePath: string,
-  options: { requireSqliteDatabase?: boolean } = {},
+  options: {
+    requireSqliteDatabase?: boolean;
+    requireManifest?: boolean;
+    validateArchiveContent?: boolean;
+  } = {},
 ): { tempRoot: string; sourceRoot: string; info: MigrationArchiveInfo } => {
   const info = inspectMigrationArchiveSync(archivePath, {
     requireSqliteDatabase: options.requireSqliteDatabase,
+    requireManifest: options.requireManifest,
     validateSqliteDatabase: false,
+    validateManifest: false,
   });
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lobsterai-data-migration-restore-'));
 
@@ -910,6 +1346,9 @@ const extractMigrationArchiveToTempSync = (
     const sourceRoot = path.join(tempRoot, ...info.root.split('/'));
     if (!fs.existsSync(sourceRoot) || !fs.statSync(sourceRoot).isDirectory()) {
       throw new Error('Backup archive did not extract a valid LobsterAI user data directory.');
+    }
+    if (options.validateArchiveContent ?? true) {
+      validateExtractedArchiveContentSync(sourceRoot);
     }
     return { tempRoot, sourceRoot, info };
   } catch (error) {
@@ -1011,6 +1450,39 @@ const removeSqliteSidecarsWithRetrySync = (userDataPath: string): void => {
   }
 };
 
+const invalidateMcpLaunchResolutionsSync = (dbPath: string): void => {
+  if (!fs.existsSync(dbPath)) return;
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath);
+    if (!tableExists(db, 'mcp_launch_resolutions')) return;
+
+    const columns = new Set(getTableColumns(db, 'mcp_launch_resolutions'));
+    const clauses: string[] = [];
+    const params: string[] = [];
+    if (columns.has('install_dir')) {
+      clauses.push('install_dir IS NOT NULL');
+    }
+    if (columns.has('command')) {
+      clauses.push('command LIKE ?');
+      params.push('%mcp-packages%');
+    }
+    if (columns.has('args_json')) {
+      clauses.push('args_json LIKE ?');
+      params.push('%mcp-packages%');
+    }
+
+    if (clauses.length === 0) {
+      db.prepare('DELETE FROM mcp_launch_resolutions').run();
+      return;
+    }
+
+    db.prepare(`DELETE FROM mcp_launch_resolutions WHERE ${clauses.join(' OR ')}`).run(...params);
+  } finally {
+    db?.close();
+  }
+};
+
 const replaceRestorableUserDataSync = (
   sourceRoot: string,
   userDataPath: string,
@@ -1061,7 +1533,11 @@ const assertSqliteRestoredSync = (
 };
 
 const restoreRollbackArchiveSync = (rollbackPath: string, userDataPath: string): void => {
-  const rollback = extractMigrationArchiveToTempSync(rollbackPath, { requireSqliteDatabase: false });
+  const rollback = extractMigrationArchiveToTempSync(rollbackPath, {
+    requireSqliteDatabase: false,
+    requireManifest: false,
+    validateArchiveContent: false,
+  });
   try {
     replaceRestorableUserDataSync(rollback.sourceRoot, userDataPath, isPreservedRestoreTopLevelEntry, {
       includeSqliteSidecars: true,
@@ -1098,11 +1574,14 @@ export const performDataMigrationRestoreSync = (
     extractedTempRoot = extracted.tempRoot;
     assertMigrationSqliteReadySync(path.join(extracted.sourceRoot, DB_FILENAME), 'Backup archive');
     checkpointSqliteDatabaseSync(path.join(extracted.sourceRoot, DB_FILENAME), 'Backup archive');
+    invalidateMcpLaunchResolutionsSync(path.join(extracted.sourceRoot, DB_FILENAME));
+    checkpointSqliteDatabaseSync(path.join(extracted.sourceRoot, DB_FILENAME), 'Backup archive');
     const sourceSummary = assertMigrationSqliteReadySync(path.join(extracted.sourceRoot, DB_FILENAME), 'Backup archive');
 
     targetWasTouched = true;
     replaceRestorableUserDataSync(extracted.sourceRoot, input.userDataPath);
     assertSqliteRestoredSync(extracted.sourceRoot, input.userDataPath, sourceSummary);
+    assertOpenClawStateSummaryMatches(extracted.sourceRoot, input.userDataPath, 'Restored data');
     removeSqliteSidecarsWithRetrySync(input.userDataPath);
 
     const result: DataMigrationLastRestoreResult = {

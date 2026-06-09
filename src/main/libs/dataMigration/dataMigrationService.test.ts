@@ -29,6 +29,25 @@ const writeFile = (filePath: string, content: string): void => {
   fs.writeFileSync(filePath, content, 'utf8');
 };
 
+const writeOpenClawStateFixture = (userDataPath: string, label: string): void => {
+  writeFile(
+    path.join(userDataPath, 'openclaw', 'state', 'openclaw.json'),
+    JSON.stringify({ label, agents: { defaults: { model: `${label}-model` } } }),
+  );
+  writeFile(
+    path.join(userDataPath, 'openclaw', 'state', 'cron', 'jobs.json'),
+    JSON.stringify({ jobs: [{ id: `${label}-cron`, name: `${label} cron` }] }),
+  );
+  writeFile(
+    path.join(userDataPath, 'openclaw', 'state', 'cron', 'runs', `${label}-cron.jsonl`),
+    `${JSON.stringify({ jobId: `${label}-cron`, status: 'ok' })}\n`,
+  );
+  writeFile(
+    path.join(userDataPath, 'openclaw', 'state', 'agents', 'writer', 'sessions', `${label}-session.jsonl`),
+    `${JSON.stringify({ type: 'message', message: { role: 'user', content: `${label} transcript` } })}\n`,
+  );
+};
+
 const writeSqliteFixture = (dbPath: string, label: string): void => {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   fs.rmSync(dbPath, { force: true });
@@ -42,14 +61,22 @@ const writeSqliteFixture = (dbPath: string, label: string): void => {
       CREATE TABLE cowork_config (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE agents (id TEXT PRIMARY KEY);
       CREATE TABLE mcp_servers (id TEXT PRIMARY KEY);
-      CREATE TABLE mcp_launch_resolutions (server_id TEXT PRIMARY KEY);
+      CREATE TABLE mcp_launch_resolutions (
+        server_id TEXT PRIMARY KEY,
+        install_dir TEXT,
+        command TEXT,
+        args_json TEXT
+      );
       CREATE TABLE user_plugins (plugin_id TEXT PRIMARY KEY);
       CREATE TABLE user_memories (id TEXT PRIMARY KEY);
       CREATE TABLE user_memory_sources (id TEXT PRIMARY KEY);
       CREATE TABLE subagent_runs (id TEXT PRIMARY KEY);
       CREATE TABLE subagent_messages (id TEXT PRIMARY KEY);
-      CREATE TABLE im_config (key TEXT PRIMARY KEY);
+      CREATE TABLE im_config (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER);
       CREATE TABLE im_session_mappings (im_conversation_id TEXT NOT NULL, platform TEXT NOT NULL, PRIMARY KEY (im_conversation_id, platform));
+      CREATE TABLE scheduled_task_meta (task_id TEXT PRIMARY KEY, origin TEXT NOT NULL, binding TEXT NOT NULL);
+      CREATE TABLE scheduled_tasks (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+      CREATE TABLE scheduled_task_runs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL);
     `);
 
     const now = Date.now();
@@ -66,14 +93,30 @@ const writeSqliteFixture = (dbPath: string, label: string): void => {
     db.prepare('INSERT INTO cowork_config (key, value, updated_at) VALUES (?, ?, ?)').run('workingDirectory', label, now);
     db.prepare('INSERT INTO agents (id) VALUES (?)').run(`${label}-agent`);
     db.prepare('INSERT INTO mcp_servers (id) VALUES (?)').run(`${label}-mcp`);
-    db.prepare('INSERT INTO mcp_launch_resolutions (server_id) VALUES (?)').run(`${label}-mcp`);
+    db.prepare('INSERT INTO mcp_launch_resolutions (server_id, install_dir, command, args_json) VALUES (?, ?, ?, ?)').run(
+      `${label}-mcp`,
+      path.join('/source-machine', 'openclaw', 'mcp-packages', label),
+      'node',
+      JSON.stringify([path.join('/source-machine', 'openclaw', 'mcp-packages', label, 'bin.js')]),
+    );
     db.prepare('INSERT INTO user_plugins (plugin_id) VALUES (?)').run(`${label}-plugin`);
     db.prepare('INSERT INTO user_memories (id) VALUES (?)').run(`${label}-memory`);
     db.prepare('INSERT INTO user_memory_sources (id) VALUES (?)').run(`${label}-memory-source`);
     db.prepare('INSERT INTO subagent_runs (id) VALUES (?)').run(`${label}-subagent`);
     db.prepare('INSERT INTO subagent_messages (id) VALUES (?)').run(`${label}-subagent-message`);
-    db.prepare('INSERT INTO im_config (key) VALUES (?)').run(`${label}-im`);
+    db.prepare('INSERT INTO im_config (key, value, updated_at) VALUES (?, ?, ?)').run(
+      `${label}-im`,
+      JSON.stringify({ enabled: true, token: `${label}-im-token` }),
+      now,
+    );
     db.prepare('INSERT INTO im_session_mappings (im_conversation_id, platform) VALUES (?, ?)').run(`${label}-conversation`, 'telegram');
+    db.prepare('INSERT INTO scheduled_task_meta (task_id, origin, binding) VALUES (?, ?, ?)').run(
+      `${label}-task`,
+      JSON.stringify({ kind: 'manual' }),
+      JSON.stringify({ kind: 'new_session' }),
+    );
+    db.prepare('INSERT INTO scheduled_tasks (id, name) VALUES (?, ?)').run(`${label}-legacy-task`, `${label} task`);
+    db.prepare('INSERT INTO scheduled_task_runs (id, task_id) VALUES (?, ?)').run(`${label}-legacy-run`, `${label}-legacy-task`);
   } finally {
     db.close();
   }
@@ -99,14 +142,20 @@ const writeMultiAgentSqliteFixture = (dbPath: string, label: string): void => {
       CREATE TABLE cowork_config (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE agents (id TEXT PRIMARY KEY);
       CREATE TABLE mcp_servers (id TEXT PRIMARY KEY);
-      CREATE TABLE mcp_launch_resolutions (server_id TEXT PRIMARY KEY);
+      CREATE TABLE mcp_launch_resolutions (
+        server_id TEXT PRIMARY KEY,
+        install_dir TEXT,
+        command TEXT,
+        args_json TEXT
+      );
       CREATE TABLE user_plugins (plugin_id TEXT PRIMARY KEY);
       CREATE TABLE user_memories (id TEXT PRIMARY KEY);
       CREATE TABLE user_memory_sources (id TEXT PRIMARY KEY);
       CREATE TABLE subagent_runs (id TEXT PRIMARY KEY);
       CREATE TABLE subagent_messages (id TEXT PRIMARY KEY);
-      CREATE TABLE im_config (key TEXT PRIMARY KEY);
+      CREATE TABLE im_config (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER);
       CREATE TABLE im_session_mappings (im_conversation_id TEXT NOT NULL, platform TEXT NOT NULL, PRIMARY KEY (im_conversation_id, platform));
+      CREATE TABLE scheduled_task_meta (task_id TEXT PRIMARY KEY, origin TEXT NOT NULL, binding TEXT NOT NULL);
     `);
 
     const now = Date.now();
@@ -186,6 +235,19 @@ const extractArchive = (archivePath: string): string => {
   return extractRoot;
 };
 
+const writeManifestFixture = (userDataPath: string): void => {
+  writeFile(
+    path.join(userDataPath, '.lobsterai-migration.json'),
+    JSON.stringify({
+      format: 'lobsterai-data-migration',
+      version: 1,
+      archiveRoot: 'LobsterAI',
+      sqlite: { exists: true },
+      openclawState: { exists: false },
+    }),
+  );
+};
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -209,7 +271,7 @@ test('createMigrationArchive excludes cache and log data and writes a manifest',
   writeSqliteFixture(path.join(userData, DB_FILENAME), 'source');
   writeFile(path.join(userData, 'cowork', 'workspaces', 'session.txt'), 'workspace');
   writeFile(path.join(userData, 'openclaw', 'mcp-packages', 'demo', 'node_modules', 'native.node'), 'native');
-  writeFile(path.join(userData, 'openclaw', 'state', 'openclaw.json'), '{}');
+  writeOpenClawStateFixture(userData, 'source');
   writeFile(path.join(userData, 'runtimes', 'node', 'node.exe'), 'runtime');
   writeFile(path.join(userData, 'SKILLs', 'demo', 'SKILL.md'), '# Demo');
 
@@ -232,6 +294,23 @@ test('createMigrationArchive excludes cache and log data and writes a manifest',
   expect(entries.some(entry => entry.includes('/Cookies'))).toBe(false);
   expect(entries.some(entry => entry.includes('/DIPS'))).toBe(false);
   expect(entries.some(entry => entry.includes('/.com.github.Electron.'))).toBe(false);
+
+  const extractRoot = extractArchive(archivePath);
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(extractRoot, 'LobsterAI', '.lobsterai-migration.json'), 'utf8'),
+  ) as {
+    format?: string;
+    archiveRoot?: string;
+    sqlite?: { rowCounts?: Record<string, number>; tableContentChecksums?: Record<string, string> };
+    openclawState?: { cronFileCount?: number; agentSessionFileCount?: number; openclawConfigExists?: boolean };
+  };
+  expect(manifest.format).toBe('lobsterai-data-migration');
+  expect(manifest.archiveRoot).toBe('LobsterAI');
+  expect(manifest.sqlite?.rowCounts?.scheduled_task_meta).toBe(1);
+  expect(manifest.sqlite?.tableContentChecksums?.im_config).toBeTruthy();
+  expect(manifest.openclawState?.openclawConfigExists).toBe(true);
+  expect(manifest.openclawState?.cronFileCount).toBeGreaterThan(0);
+  expect(manifest.openclawState?.agentSessionFileCount).toBeGreaterThan(0);
 });
 
 test('createMigrationArchive replaces the live sqlite database with the snapshot', () => {
@@ -280,7 +359,7 @@ test('createMigrationArchive rejects a source without a sqlite database', () => 
   expect(fs.existsSync(archivePath)).toBe(false);
 });
 
-test('inspectMigrationArchive accepts legacy Windows PowerShell archive root', () => {
+test('inspectMigrationArchive rejects legacy Windows PowerShell archive root', () => {
   const root = makeTempDir();
   const legacyRoot = path.join(root, 'AppData', 'Roaming', 'LobsterAI');
   const archivePath = path.join(root, 'legacy.tar.gz');
@@ -293,9 +372,56 @@ test('inspectMigrationArchive accepts legacy Windows PowerShell archive root', (
     cwd: root,
   }, ['AppData']);
 
-  const info = inspectMigrationArchiveSync(archivePath);
-  expect(info.root).toBe('AppData/Roaming/LobsterAI');
-  expect(info.rootKind).toBe('legacy-windows');
+  expect(() => inspectMigrationArchiveSync(archivePath)).toThrow(/does not contain LobsterAI user data/);
+});
+
+test('inspectMigrationArchive rejects archives without a migration manifest', () => {
+  const root = makeTempDir();
+  const sourceUserData = path.join(root, 'LobsterAI');
+  const archivePath = path.join(root, 'missing-manifest.tar.gz');
+  writeSqliteFixture(path.join(sourceUserData, DB_FILENAME), 'source');
+
+  tar.create({
+    sync: true,
+    gzip: true,
+    file: archivePath,
+    cwd: root,
+  }, ['LobsterAI']);
+
+  expect(() => inspectMigrationArchiveSync(archivePath)).toThrow(/missing \.lobsterai-migration\.json/);
+});
+
+test('inspectMigrationArchive rejects unsupported archive extensions', () => {
+  const root = makeTempDir();
+  const archivePath = path.join(root, 'backup.tar');
+  writeFile(archivePath, 'not a gzip archive');
+
+  expect(() => inspectMigrationArchiveSync(archivePath)).toThrow(/\.tar\.gz or \.tgz/);
+});
+
+test('inspectMigrationArchive rejects archives whose manifest does not match sqlite content', () => {
+  const root = makeTempDir();
+  const sourceUserData = path.join(root, 'source', 'LobsterAI');
+  const archivePath = path.join(root, 'source-backup.tar.gz');
+  const tamperedArchivePath = path.join(root, 'tampered-backup.tar.gz');
+  writeSqliteFixture(path.join(sourceUserData, DB_FILENAME), 'source');
+
+  createMigrationArchiveSync({ userDataPath: sourceUserData, outputPath: archivePath });
+  const extractRoot = extractArchive(archivePath);
+  const manifestPath = path.join(extractRoot, 'LobsterAI', '.lobsterai-migration.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+    sqlite?: { checksumSha256?: string };
+  };
+  manifest.sqlite = { ...(manifest.sqlite || {}), checksumSha256: 'wrong-checksum' };
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+  tar.create({
+    sync: true,
+    gzip: true,
+    file: tamperedArchivePath,
+    cwd: extractRoot,
+  }, ['LobsterAI']);
+
+  expect(() => inspectMigrationArchiveSync(tamperedArchivePath)).toThrow(/sqlite checksum mismatch/);
 });
 
 test('inspectMigrationArchive rejects unreadable sqlite database', () => {
@@ -303,6 +429,7 @@ test('inspectMigrationArchive rejects unreadable sqlite database', () => {
   const sourceUserData = path.join(root, 'LobsterAI');
   const archivePath = path.join(root, 'invalid.tar.gz');
   writeFile(path.join(sourceUserData, DB_FILENAME), 'not a sqlite database');
+  writeManifestFixture(sourceUserData);
 
   tar.create({
     sync: true,
@@ -340,7 +467,9 @@ test('performPendingDataMigrationRestoreSync creates rollback and restores backu
 
   writeSqliteFixture(path.join(sourceUserData, DB_FILENAME), 'source');
   writeFile(path.join(sourceUserData, 'SKILLs', 'demo', 'SKILL.md'), '# Demo');
+  writeOpenClawStateFixture(sourceUserData, 'source');
   writeSqliteFixture(path.join(targetUserData, DB_FILENAME), 'target');
+  writeOpenClawStateFixture(targetUserData, 'target');
 
   createMigrationArchiveSync({ userDataPath: sourceUserData, outputPath: archivePath });
   writePendingRestoreRequestSync(targetUserData, archivePath);
@@ -359,9 +488,17 @@ test('performPendingDataMigrationRestoreSync creates rollback and restores backu
   expect(readSqliteString(path.join(targetUserData, DB_FILENAME), 'SELECT id FROM cowork_sessions')).toBe('source-session');
   expect(readSqliteString(path.join(targetUserData, DB_FILENAME), 'SELECT id FROM agents')).toBe('source-agent');
   expect(readSqliteString(path.join(targetUserData, DB_FILENAME), 'SELECT id FROM mcp_servers')).toBe('source-mcp');
+  expect(readSqliteCount(path.join(targetUserData, DB_FILENAME), 'mcp_launch_resolutions')).toBe(0);
   expect(readSqliteString(path.join(targetUserData, DB_FILENAME), 'SELECT plugin_id FROM user_plugins')).toBe('source-plugin');
   expect(readSqliteString(path.join(targetUserData, DB_FILENAME), 'SELECT key FROM im_config')).toBe('source-im');
+  expect(readSqliteString(path.join(targetUserData, DB_FILENAME), 'SELECT task_id FROM scheduled_task_meta')).toBe('source-task');
   expect(fs.readFileSync(path.join(targetUserData, 'SKILLs', 'demo', 'SKILL.md'), 'utf8')).toBe('# Demo');
+  expect(fs.readFileSync(path.join(targetUserData, 'openclaw', 'state', 'cron', 'jobs.json'), 'utf8'))
+    .toContain('source-cron');
+  expect(fs.readFileSync(
+    path.join(targetUserData, 'openclaw', 'state', 'agents', 'writer', 'sessions', 'source-session.jsonl'),
+    'utf8',
+  )).toContain('source transcript');
 });
 
 test('performDataMigrationRestoreSync restores backup data without a pending marker', () => {
@@ -570,6 +707,7 @@ test('performDataMigrationRestoreSync rolls back when the backup is missing sqli
 
   const sourceParent = path.dirname(sourceUserData);
   writeFile(path.join(sourceUserData, 'SKILLs', 'demo', 'SKILL.md'), '# Demo');
+  writeManifestFixture(sourceUserData);
   writeSqliteFixture(path.join(targetUserData, DB_FILENAME), 'target');
 
   tar.create({
@@ -603,6 +741,7 @@ test('performDataMigrationRestoreSync rejects unreadable backup sqlite before to
   const sourceParent = path.dirname(sourceUserData);
   writeFile(path.join(sourceUserData, DB_FILENAME), 'not a sqlite database');
   writeFile(path.join(sourceUserData, 'SKILLs', 'demo', 'SKILL.md'), '# Demo');
+  writeManifestFixture(sourceUserData);
   writeSqliteFixture(path.join(targetUserData, DB_FILENAME), 'target');
   writeFile(path.join(targetUserData, 'backups', 'sqlite', 'snapshots', 'lobsterai-latest.sqlite'), 'target-backup');
 

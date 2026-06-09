@@ -94,6 +94,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     dataMigrationRestoreDialogTitle: '导入 LobsterAI 数据备份',
     dataMigrationBackupArchiveFilter: 'LobsterAI 备份包',
     dataMigrationAllFilesFilter: '所有文件',
+    dataMigrationBackupBlockedByActiveWorkloads:
+      '当前有正在运行的 Agent 或定时任务，请停止或等待任务完成后再备份。',
 
     // ── IM connectivity test messages ───────────────────────────────────
     // Common
@@ -368,6 +370,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     dataMigrationRestoreDialogTitle: 'Import LobsterAI Data Backup',
     dataMigrationBackupArchiveFilter: 'LobsterAI Backup',
     dataMigrationAllFilesFilter: 'All Files',
+    dataMigrationBackupBlockedByActiveWorkloads:
+      'An agent or scheduled task is still running. Stop it or wait for it to finish before backing up.',
 
     // ── IM connectivity test messages ───────────────────────────────────
     // Common
