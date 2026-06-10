@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { type AppUpdateRuntimeState,AppUpdateStatus } from '../../../shared/appUpdate/constants';
+import { type AppUpdateRuntimeState, AppUpdateStatus, isManualDownloadUrl } from '../../../shared/appUpdate/constants';
 import { i18nService } from '../../services/i18n';
 import Modal from '../common/Modal';
 
@@ -36,35 +36,39 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
   const { latestVersion, date, changeLog, url } = updateInfo;
   const lang = i18nService.getLanguage();
   const currentLog = changeLog?.[lang] ?? { title: '', content: [] };
-  const isManualUrl = url.includes('#') || url.endsWith('/download-list');
+  const isManualUrl = isManualDownloadUrl(url);
   const isInstalling = updateState.status === AppUpdateStatus.Installing;
   const canDismiss = updateState.status !== AppUpdateStatus.Downloading && !isInstalling;
   const canInstall = updateState.status === AppUpdateStatus.Ready && updateState.readyFilePath != null;
   const isError = updateState.status === AppUpdateStatus.Error;
+  // A failed install keeps the verified file and returns to Ready with an
+  // error message, so retrying installs the existing file without re-downloading.
+  const isInstallError = canInstall && updateState.errorMessage != null;
   const isDownloading = updateState.status === AppUpdateStatus.Downloading || updateState.status === AppUpdateStatus.Checking;
   const showInfoFooter = updateState.status === AppUpdateStatus.Available;
-  const isRetryState = updateState.status === AppUpdateStatus.Error;
 
   const title = isError
-    ? (canInstall ? i18nService.t('updateInstallFailed') : i18nService.t('updateDownloadFailed'))
-    : canInstall
-      ? i18nService.t('updateReadyTitle')
-      : isDownloading
-        ? i18nService.t('updateDownloadingBackground')
-        : i18nService.t('updateAvailableTitle');
+    ? i18nService.t('updateDownloadFailed')
+    : isInstallError
+      ? i18nService.t('updateInstallFailed')
+      : canInstall
+        ? i18nService.t('updateReadyTitle')
+        : isDownloading
+          ? i18nService.t('updateDownloadingBackground')
+          : i18nService.t('updateAvailableTitle');
 
   const confirmLabel = canInstall
-    ? i18nService.t('updateReadyConfirm')
+    ? i18nService.t(isInstallError ? 'updateRetry' : 'updateReadyConfirm')
     : isManualUrl
       ? i18nService.t('updateAvailableConfirm')
-      : isRetryState
+      : isError
         ? i18nService.t('updateRetry')
         : i18nService.t('updateAvailableConfirm');
 
   return (
     <Modal onClose={canDismiss ? onCancel : () => {}} overlayClassName="fixed inset-0 z-50 flex items-center justify-center modal-backdrop" className="modal-content w-full max-w-md mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden">
       <div className="px-5 pt-5 pb-4">
-        <h3 className={`text-base font-semibold ${isError ? 'text-red-500 dark:text-red-400' : 'text-foreground'}`}>
+        <h3 className={`text-base font-semibold ${isError || isInstallError ? 'text-red-500 dark:text-red-400' : 'text-foreground'}`}>
           {title}
         </h3>
         <p className="mt-1.5 text-xs text-secondary">
@@ -199,7 +203,7 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
         </div>
       )}
 
-      {isError && !canInstall && (
+      {isError && (
         <div className="px-5 pb-5 flex items-center justify-end gap-2">
           <button
             type="button"

@@ -10,6 +10,7 @@ import {
   type AppUpdateRuntimeState,
   AppUpdateSource,
   AppUpdateStatus,
+  isManualDownloadUrl,
 } from '../../shared/appUpdate/constants';
 import type { SqliteStore } from '../sqliteStore';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './appUpdateInstaller';
@@ -44,7 +45,7 @@ type UpdateApiResponse = {
 
 export const INSTALLATION_UUID_KEY = 'installation_uuid';
 const APP_UPDATE_TEST_CURRENT_VERSION_ENV = 'LOBSTERAI_UPDATE_CURRENT_VERSION';
-const APP_UPDATE_READY_FILE_KEY_PREFIX = 'app_update_ready_file';
+export const APP_UPDATE_READY_FILE_KEY_PREFIX = 'app_update_ready_file';
 
 type StoredReadyFile = {
   version: string;
@@ -330,16 +331,34 @@ export class AppUpdateCoordinator {
       return { success: true, state: this.getState() };
     } catch (error) {
       console.error('[AppUpdate] install failed:', error);
+      const message = error instanceof Error ? error.message : 'Installation failed';
+
+      // The verified installer usually survives a failed launch (e.g. the user
+      // dismissed the UAC prompt on Windows), so return to Ready and let the
+      // user retry the install without re-downloading. Only fall back to
+      // Available when the file is gone or corrupted.
+      const fileIntact =
+        readyFileHash != null && (await this.isReadyFileValid(filePath, readyFileHash));
+      if (fileIntact) {
+        const state = this.setState({
+          ...this.state,
+          status: AppUpdateStatus.Ready,
+          errorMessage: message,
+        });
+        return { success: false, state, error: message };
+      }
+
+      console.warn(`[AppUpdate] ready file is no longer valid after failed install: ${filePath}`);
+      this.clearStoredReadyFile(this.state.source);
       const state = this.setState({
         ...this.state,
-        status: AppUpdateStatus.Error,
-        errorMessage: error instanceof Error ? error.message : 'Installation failed',
+        status: AppUpdateStatus.Available,
+        progress: null,
+        readyFilePath: null,
+        readyFileHash: null,
+        errorMessage: message,
       });
-      return {
-        success: false,
-        state,
-        error: state.errorMessage ?? 'Installation failed',
-      };
+      return { success: false, state, error: message };
     }
   }
 
@@ -531,7 +550,7 @@ export class AppUpdateCoordinator {
   }
 
   private isDirectInstallerUrl(url: string): boolean {
-    if (!url || url.includes('#') || url.endsWith('/download-list')) {
+    if (!url || isManualDownloadUrl(url)) {
       return false;
     }
     const normalizedPath = new URL(url).pathname.toLowerCase();
@@ -738,31 +757,40 @@ export class AppUpdateCoordinator {
       console.warn('[AppUpdate] in-memory ready file is invalid');
     }
 
-    const storedReadyFile = this.getStoredReadyFile(targetSource);
-    if (!storedReadyFile || storedReadyFile.version !== latestVersion) {
+    // A matching installer may have been downloaded by the other flow (e.g. a
+    // manual check after the auto updater already fetched this version), so
+    // consider both persisted records, preferring the target source's own.
+    const candidateSources =
+      targetSource === AppUpdateSource.Manual
+        ? [AppUpdateSource.Manual, AppUpdateSource.Auto]
+        : [AppUpdateSource.Auto, AppUpdateSource.Manual];
+    for (const source of candidateSources) {
+      const storedReadyFile = this.getStoredReadyFile(source);
+      if (!storedReadyFile || storedReadyFile.version !== latestVersion) {
+        console.log(
+          `[AppUpdate] stored ready file mismatch, source=${source}, storedVersion=${storedReadyFile?.version ?? 'none'}, latestVersion=${latestVersion}`,
+        );
+        continue;
+      }
+
       console.log(
-        `[AppUpdate] stored ready file mismatch, targetSource=${targetSource}, storedVersion=${storedReadyFile?.version ?? 'none'}, latestVersion=${latestVersion}`,
+        `[AppUpdate] checking persisted ready file: ${storedReadyFile.filePath}`,
       );
-      return null;
-    }
+      const isValid = await this.isReadyFileValid(
+        storedReadyFile.filePath,
+        storedReadyFile.fileHash,
+      );
+      if (isValid) {
+        console.log(`[AppUpdate] persisted ready file from source=${source} is valid`);
+        return storedReadyFile;
+      }
 
-    console.log(
-      `[AppUpdate] checking persisted ready file: ${storedReadyFile.filePath}`,
-    );
-    const isValid = await this.isReadyFileValid(
-      storedReadyFile.filePath,
-      storedReadyFile.fileHash,
-    );
-    if (isValid) {
-      console.log('[AppUpdate] persisted ready file is valid');
-      return storedReadyFile;
+      console.warn(
+        `[AppUpdate] persisted ready file is invalid, deleting: ${storedReadyFile.filePath}`,
+      );
+      await this.cleanupReadyFile(storedReadyFile.filePath);
+      this.clearStoredReadyFile(source);
     }
-
-    console.warn(
-      `[AppUpdate] persisted ready file is invalid, deleting: ${storedReadyFile.filePath}`,
-    );
-    await this.cleanupReadyFile(storedReadyFile.filePath);
-    this.clearStoredReadyFile(targetSource);
     return null;
   }
 

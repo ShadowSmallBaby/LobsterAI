@@ -67,13 +67,11 @@ export interface AppUpdateCheckResult {
 export const APP_UPDATE_POLL_INTERVAL_MS = 12 * 60 * 60 * 1000;
 export const APP_UPDATE_HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000;
 
-export const AppUpdateAction = {
-  OpenDownloadPage: 'openDownloadPage',
-  InstallReady: 'installReady',
-  Downloading: 'downloading',
-  RetryDownload: 'retryDownload',
-  RetryInstall: 'retryInstall',
-  None: 'none',
-} as const;
-
-export type AppUpdateAction = typeof AppUpdateAction[keyof typeof AppUpdateAction];
+/**
+ * True when the update URL points at a download landing page that the user
+ * must visit in a browser, rather than a direct installer file the app can
+ * download and run itself.
+ */
+export function isManualDownloadUrl(url: string): boolean {
+  return url.includes('#') || url.endsWith('/download-list');
+}
