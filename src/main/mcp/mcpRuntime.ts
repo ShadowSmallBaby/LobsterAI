@@ -3,6 +3,9 @@ import { app, BrowserWindow } from 'electron';
 import path from 'path';
 
 import { McpIpcChannel } from '../../shared/mcp/constants';
+import { isComputerUseKitInstalled } from '../computerUse/computerUseKit';
+import { resolveComputerUseMcpServer } from '../computerUse/computerUseMcpServer';
+import { installComputerUseRuntime } from '../computerUse/computerUseRuntime';
 import { getElectronNodeRuntimePath } from '../libs/coworkUtil';
 import {
   type AskUserRequest,
@@ -185,6 +188,7 @@ export class McpRuntime {
     let optimizedCount = 0;
     let skippedCount = 0;
     let rawCount = 0;
+    let builtInCount = 0;
 
     const electronPath = getElectronNodeRuntimePath();
     const npmBinDir = app.isPackaged
@@ -272,8 +276,31 @@ export class McpRuntime {
         });
       }
     }
+
+    const askUserCallbackUrl = this.getAskUserCallbackUrl();
+    const shouldEnableComputerUse = askUserCallbackUrl !== null
+      && isComputerUseKitInstalled(this.deps.getStore());
+    if (shouldEnableComputerUse) {
+      const installResult = await installComputerUseRuntime();
+      if (!installResult.success) {
+        console.warn(`[MCP] failed to install Computer Use runtime: ${installResult.error || 'unknown error'}`);
+      }
+    }
+
+    const computerUseServer = shouldEnableComputerUse
+      ? resolveComputerUseMcpServer({
+        askUserCallbackUrl,
+        bridgeSecret: this.bridgeSecret,
+        electronNodePath: electronPath,
+      })
+      : null;
+    if (computerUseServer) {
+      resolved.push(computerUseServer);
+      builtInCount++;
+    }
+
     console.log(
-      `[MCP] resolved ${resolved.length}/${enabledServers.length} enabled server(s) for OpenClaw in ${Date.now() - startedAt}ms; optimized=${optimizedCount}, raw=${rawCount}, skipped=${skippedCount}`,
+      `[MCP] resolved ${resolved.length}/${enabledServers.length} enabled server(s) for OpenClaw in ${Date.now() - startedAt}ms; optimized=${optimizedCount}, raw=${rawCount}, skipped=${skippedCount}, builtIn=${builtInCount}`,
     );
     return resolved;
   }
