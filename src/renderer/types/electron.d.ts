@@ -20,6 +20,7 @@ import type {
 import type {
   HtmlShareAccessMode,
   HtmlShareConfigurableStatus,
+  HtmlShareSourceType,
   HtmlShareStatus,
 } from '../../shared/htmlShare/constants';
 import type {
@@ -902,6 +903,34 @@ interface IElectronAPI {
     }) => Promise<HtmlShareResult>;
     getByHtmlFile: (options: {
       filePath: string;
+    }) => Promise<{ success: boolean; share?: HtmlShareResult | null; error?: string; code?: number }>;
+    createFromArtifactFile: (options: {
+      sourceType: HtmlShareSourceType;
+      sessionId: string;
+      artifactId: string;
+      title: string;
+      fileName?: string;
+      filePath?: string;
+      content?: string;
+      remoteUrl?: string;
+    }) => Promise<HtmlShareResult>;
+    updateFromArtifactFile: (options: {
+      sourceType: HtmlShareSourceType;
+      shareId: string;
+      sessionId: string;
+      artifactId: string;
+      title: string;
+      fileName?: string;
+      filePath?: string;
+      content?: string;
+      remoteUrl?: string;
+      currentStatus?: HtmlShareStatus;
+    }) => Promise<HtmlShareResult>;
+    getByArtifactFile: (options: {
+      sourceType: HtmlShareSourceType;
+      sessionId?: string;
+      artifactId?: string;
+      filePath?: string;
     }) => Promise<{ success: boolean; share?: HtmlShareResult | null; error?: string; code?: number }>;
     updateStatus: (options: {
       shareId: string;

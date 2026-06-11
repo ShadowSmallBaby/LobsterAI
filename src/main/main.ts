@@ -206,6 +206,10 @@ import {
   stopHtmlPreviewServer,
 } from './libs/htmlPreviewServer';
 import {
+  type ArtifactFileShareSourceType,
+  packageArtifactFile,
+} from './libs/htmlShare/artifactFileSharePackager';
+import {
   getHtmlShareBySource,
   updateHtmlShare,
   updateHtmlShareStatus,
@@ -340,6 +344,7 @@ const IPC_MAX_DEPTH = 5;
 const IPC_MAX_KEYS = 80;
 const IPC_MAX_ITEMS = 40;
 const MAX_INLINE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_ARTIFACT_SHARE_CONTENT_CHARS = 30 * 1024 * 1024;
 const ENGINE_NOT_READY_CODE = 'ENGINE_NOT_READY';
 const LOCAL_WEB_SERVICE_PROBE_TIMEOUT_MS = 700;
 const LOCAL_WEB_SERVICE_TITLE_MAX_LENGTH = 80;
@@ -382,6 +387,29 @@ interface HtmlShareGetByHtmlFileInput {
   filePath: string;
 }
 
+interface HtmlShareCreateFromArtifactFileInput {
+  sourceType: ArtifactFileShareSourceType;
+  sessionId: string;
+  artifactId: string;
+  title: string;
+  fileName?: string;
+  filePath?: string;
+  content?: string;
+  remoteUrl?: string;
+}
+
+interface HtmlShareUpdateFromArtifactFileInput extends HtmlShareCreateFromArtifactFileInput {
+  shareId: string;
+  currentStatus?: HtmlShareStatusValue;
+}
+
+interface HtmlShareGetByArtifactFileInput {
+  sourceType: ArtifactFileShareSourceType;
+  sessionId?: string;
+  artifactId?: string;
+  filePath?: string;
+}
+
 interface HtmlShareUpdateStatusInput {
   shareId: string;
   status: HtmlShareConfigurableStatus;
@@ -405,8 +433,28 @@ function sanitizeHtmlShareString(
   return trimmed;
 }
 
+function sanitizeOptionalHtmlShareString(
+  value: unknown,
+  fieldName: string,
+  maxLength = IPC_STRING_MAX_CHARS,
+): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return sanitizeHtmlShareString(value, fieldName, maxLength);
+}
+
 function sanitizeHtmlShareTitle(value: unknown): string {
   return sanitizeHtmlShareString(value, 'title', 255);
+}
+
+function sanitizeArtifactFileShareSourceType(value: unknown): ArtifactFileShareSourceType {
+  const sourceType = sanitizeHtmlShareString(value, 'sourceType', 32);
+  if (
+    sourceType !== HtmlShareSourceType.ImageFile &&
+    sourceType !== HtmlShareSourceType.SvgFile
+  ) {
+    throw new Error('sourceType must be image_file or svg_file.');
+  }
+  return sourceType;
 }
 
 function validateHtmlShareAccessMode(value: unknown): void {
@@ -475,6 +523,61 @@ function sanitizeGetByHtmlFileInput(input: unknown): HtmlShareGetByHtmlFileInput
   };
 }
 
+function sanitizeCreateFromArtifactFileInput(input: unknown): HtmlShareCreateFromArtifactFileInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid artifact share request.');
+  }
+  const source = input as Record<string, unknown>;
+  validateHtmlShareAccessMode(source.accessMode);
+  const options: HtmlShareCreateFromArtifactFileInput = {
+    sourceType: sanitizeArtifactFileShareSourceType(source.sourceType),
+    sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
+    artifactId: sanitizeHtmlShareString(source.artifactId, 'artifactId', 128),
+    title: sanitizeHtmlShareTitle(source.title),
+    fileName: sanitizeOptionalHtmlShareString(source.fileName, 'fileName', 255),
+    filePath: sanitizeOptionalHtmlShareString(source.filePath, 'filePath', 4096),
+    content: sanitizeOptionalHtmlShareString(
+      source.content,
+      'content',
+      MAX_ARTIFACT_SHARE_CONTENT_CHARS,
+    ),
+    remoteUrl: sanitizeOptionalHtmlShareString(source.remoteUrl, 'remoteUrl', 4096),
+  };
+  if (!options.filePath && !options.content && !options.remoteUrl) {
+    throw new Error('Artifact share source is required.');
+  }
+  return options;
+}
+
+function sanitizeUpdateFromArtifactFileInput(
+  input: unknown,
+): HtmlShareUpdateFromArtifactFileInput {
+  const source = sanitizeCreateFromArtifactFileInput(input);
+  const record = input as Record<string, unknown>;
+  return {
+    ...source,
+    shareId: sanitizeHtmlShareString(record.shareId, 'shareId', 64),
+    currentStatus: sanitizeHtmlShareStatus(record.currentStatus),
+  };
+}
+
+function sanitizeGetByArtifactFileInput(input: unknown): HtmlShareGetByArtifactFileInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid artifact share lookup request.');
+  }
+  const source = input as Record<string, unknown>;
+  const options: HtmlShareGetByArtifactFileInput = {
+    sourceType: sanitizeArtifactFileShareSourceType(source.sourceType),
+    sessionId: sanitizeOptionalHtmlShareString(source.sessionId, 'sessionId', 128),
+    artifactId: sanitizeOptionalHtmlShareString(source.artifactId, 'artifactId', 128),
+    filePath: sanitizeOptionalHtmlShareString(source.filePath, 'filePath', 4096),
+  };
+  if (!options.filePath && (!options.sessionId || !options.artifactId)) {
+    throw new Error('Artifact share lookup source is required.');
+  }
+  return options;
+}
+
 function sanitizeUpdateHtmlShareStatusInput(input: unknown): HtmlShareUpdateStatusInput {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('Invalid HTML share status request.');
@@ -507,6 +610,23 @@ function buildHtmlShareClientSourceKey(filePath: string): string {
   return crypto
     .createHash('sha256')
     .update(`${HtmlShareSourceType.HtmlFile}:${normalizedPath}`)
+    .digest('hex');
+}
+
+function buildArtifactShareClientSourceKey(options: HtmlShareGetByArtifactFileInput): string {
+  if (options.filePath) {
+    const normalizedPath = normalizeHtmlShareSourceFilePath(options.filePath);
+    return crypto
+      .createHash('sha256')
+      .update(`${options.sourceType}:file:${normalizedPath}`)
+      .digest('hex');
+  }
+  if (!options.sessionId || !options.artifactId) {
+    throw new Error('Artifact share source key is missing.');
+  }
+  return crypto
+    .createHash('sha256')
+    .update(`${options.sourceType}:artifact:${options.sessionId}:${options.artifactId}`)
     .digest('hex');
 }
 
@@ -4669,6 +4789,138 @@ if (!gotTheLock) {
       return { ...result, warnings: packaged.warnings };
     } catch (error) {
       console.error('[HtmlShare] failed to update share from HTML file:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to update share',
+      };
+    } finally {
+      if (archivePath) {
+        const archiveDir = path.dirname(archivePath);
+        fs.promises
+          .rm(archiveDir, { recursive: true, force: true })
+          .then(() => {
+            console.debug(`[HtmlShare] cleaned temporary archive directory ${archiveDir}`);
+          })
+          .catch((cleanupError): undefined => {
+            console.warn('[HtmlShare] temporary archive cleanup failed:', cleanupError);
+            return undefined;
+          });
+      }
+    }
+  });
+
+  ipcMain.handle(HtmlShareIpc.CreateFromArtifactFile, async (_event, input: unknown) => {
+    let archivePath: string | undefined;
+    try {
+      const options = sanitizeCreateFromArtifactFileInput(input);
+      console.debug(
+        `[HtmlShare] received ${options.sourceType} share request for session ${options.sessionId} and artifact ${options.artifactId}`,
+      );
+      const clientSourceKey = buildArtifactShareClientSourceKey(options);
+      const packaged = await packageArtifactFile({
+        sourceType: options.sourceType,
+        fileName: options.fileName,
+        filePath: options.filePath,
+        content: options.content,
+        remoteUrl: options.remoteUrl,
+      });
+      archivePath = packaged.archivePath;
+      console.debug(
+        `[HtmlShare] packaged ${options.sourceType} share with ${packaged.totalBytes} bytes and entry ${packaged.entryFile}`,
+      );
+      const result = await uploadHtmlShare(
+        getServerApiBaseUrl(),
+        getHtmlSharePublicBaseUrl(),
+        fetchWithAuth,
+        {
+          archivePath: packaged.archivePath,
+          sourceType: options.sourceType,
+          clientSourceKey,
+          sessionId: options.sessionId,
+          artifactId: options.artifactId,
+          title: options.title,
+          entryFile: packaged.entryFile,
+          sourceSha256: packaged.sourceSha256,
+        },
+      );
+      return { ...result, warnings: packaged.warnings };
+    } catch (error) {
+      console.error('[HtmlShare] failed to create share from artifact file:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create share',
+      };
+    } finally {
+      if (archivePath) {
+        const archiveDir = path.dirname(archivePath);
+        fs.promises
+          .rm(archiveDir, { recursive: true, force: true })
+          .then(() => {
+            console.debug(`[HtmlShare] cleaned temporary archive directory ${archiveDir}`);
+          })
+          .catch((cleanupError): undefined => {
+            console.warn('[HtmlShare] temporary archive cleanup failed:', cleanupError);
+            return undefined;
+          });
+      }
+    }
+  });
+
+  ipcMain.handle(HtmlShareIpc.GetByArtifactFile, async (_event, input: unknown) => {
+    try {
+      const options = sanitizeGetByArtifactFileInput(input);
+      const clientSourceKey = buildArtifactShareClientSourceKey(options);
+      return await getHtmlShareBySource(
+        getServerApiBaseUrl(),
+        getHtmlSharePublicBaseUrl(),
+        fetchWithAuth,
+        options.sourceType,
+        clientSourceKey,
+      );
+    } catch (error) {
+      console.error('[HtmlShare] failed to look up share from artifact file:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to load share',
+      };
+    }
+  });
+
+  ipcMain.handle(HtmlShareIpc.UpdateFromArtifactFile, async (_event, input: unknown) => {
+    let archivePath: string | undefined;
+    try {
+      const options = sanitizeUpdateFromArtifactFileInput(input);
+      if (options.currentStatus === HtmlShareStatus.Disabled) {
+        return { success: false, code: HtmlShareErrorCode.DisabledCannotUpdate };
+      }
+      const clientSourceKey = buildArtifactShareClientSourceKey(options);
+      const packaged = await packageArtifactFile({
+        sourceType: options.sourceType,
+        fileName: options.fileName,
+        filePath: options.filePath,
+        content: options.content,
+        remoteUrl: options.remoteUrl,
+      });
+      archivePath = packaged.archivePath;
+      const result = await updateHtmlShare(
+        getServerApiBaseUrl(),
+        getHtmlSharePublicBaseUrl(),
+        fetchWithAuth,
+        options.shareId,
+        {
+          archivePath: packaged.archivePath,
+          sourceType: options.sourceType,
+          clientSourceKey,
+          sessionId: options.sessionId,
+          artifactId: options.artifactId,
+          title: options.title,
+          entryFile: packaged.entryFile,
+          sourceSha256: packaged.sourceSha256,
+        },
+      );
+      return { ...result, warnings: packaged.warnings };
+    } catch (error) {
+      console.error('[HtmlShare] failed to update share from artifact file:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to update share',

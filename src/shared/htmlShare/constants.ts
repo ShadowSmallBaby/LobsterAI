@@ -2,6 +2,9 @@ export const HtmlShareIpc = {
   CreateFromHtmlFile: 'htmlShare:createFromHtmlFile',
   UpdateFromHtmlFile: 'htmlShare:updateFromHtmlFile',
   GetByHtmlFile: 'htmlShare:getByHtmlFile',
+  CreateFromArtifactFile: 'htmlShare:createFromArtifactFile',
+  UpdateFromArtifactFile: 'htmlShare:updateFromArtifactFile',
+  GetByArtifactFile: 'htmlShare:getByArtifactFile',
   UpdateStatus: 'htmlShare:updateStatus',
   Disable: 'htmlShare:disable',
   Get: 'htmlShare:get',
@@ -11,6 +14,8 @@ export type HtmlShareIpc = (typeof HtmlShareIpc)[keyof typeof HtmlShareIpc];
 
 export const HtmlShareSourceType = {
   HtmlFile: 'html_file',
+  ImageFile: 'image_file',
+  SvgFile: 'svg_file',
 } as const;
 
 export type HtmlShareSourceType = (typeof HtmlShareSourceType)[keyof typeof HtmlShareSourceType];
@@ -39,6 +44,7 @@ export const HtmlShareErrorCode = {
   AccessCodeRateLimited: 41309,
   AccessModeInvalid: 41310,
   ActiveShareLimitReached: 41311,
+  UnsafeSvg: 41312,
   FeatureUnavailable: 49001,
   DisabledCannotUpdate: 49002,
 } as const;
