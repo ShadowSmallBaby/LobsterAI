@@ -27,7 +27,11 @@ const { applyOpenClawPluginPatches } = require('./openclaw-plugin-patches/index.
 const {
   BEE_PACKAGE_NAME,
   prepareOpenClawNeteaseBeePackage,
-} = require('./prepare-openclaw-netease-bee.cjs');
+} = require('./openclaw-plugin-preparers/netease-bee.cjs');
+const {
+  NIM_PLUGIN_PACKAGE_ID,
+  prepareOpenClawNimPackage,
+} = require('./openclaw-plugin-preparers/nim-channel.cjs');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -642,6 +646,11 @@ function main() {
             installSpec = npmPack(`${BEE_PACKAGE_NAME}@${version}`, plugin.registry, stagingDir);
           }
           installSpec = prepareOpenClawNeteaseBeePackage(installSpec, stagingDir, { log });
+        }
+
+        if (id === NIM_PLUGIN_PACKAGE_ID) {
+          log('  Preparing NIM package for OpenClaw 2026.6 runtime install.');
+          installSpec = prepareOpenClawNimPackage(installSpec, stagingDir, { log });
         }
 
         runOpenClawCli(

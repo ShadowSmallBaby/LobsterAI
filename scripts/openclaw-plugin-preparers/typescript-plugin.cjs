@@ -1,13 +1,13 @@
 'use strict';
 
+// Repairs third-party packages that publish TypeScript-only OpenClaw runtime entries.
+
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const esbuild = require('esbuild');
 const tar = require('tar');
-
-const BEE_PACKAGE_NAME = 'openclaw-netease-bee';
 
 function readJsonFile(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -88,14 +88,22 @@ function ensureFileIncluded(pkg, relativePath) {
   }
 }
 
-function patchBeePackageDirectory(packageDir, opts = {}) {
+function assertExpectedPackageName(pkg, expectedPackageNames) {
+  if (!Array.isArray(expectedPackageNames) || expectedPackageNames.length === 0) {
+    return;
+  }
+  if (!expectedPackageNames.includes(pkg.name)) {
+    throw new Error(`Expected ${expectedPackageNames.join(' or ')}, got ${pkg.name || 'unnamed package'}`);
+  }
+}
+
+function patchTypeScriptPluginPackageDirectory(packageDir, opts = {}) {
   const log = opts.log || (() => {});
   const packageJsonPath = path.join(packageDir, 'package.json');
   const pkg = readJsonFile(packageJsonPath);
+  const packageLabel = opts.packageLabel || pkg.name || 'OpenClaw plugin';
 
-  if (pkg.name && pkg.name !== BEE_PACKAGE_NAME) {
-    throw new Error(`Expected ${BEE_PACKAGE_NAME}, got ${pkg.name}`);
-  }
+  assertExpectedPackageName(pkg, opts.expectedPackageNames);
 
   const extensions = pkg.openclaw?.extensions;
   if (!Array.isArray(extensions)) {
@@ -118,7 +126,7 @@ function patchBeePackageDirectory(packageDir, opts = {}) {
     assertInsideDirectory(packageDir, outputPath);
 
     if (!fs.existsSync(entryPath)) {
-      throw new Error(`Bee TypeScript runtime entry is missing: ${entry}`);
+      throw new Error(`${packageLabel} TypeScript runtime entry is missing: ${entry}`);
     }
 
     esbuild.buildSync({
@@ -148,16 +156,17 @@ function patchBeePackageDirectory(packageDir, opts = {}) {
   }
   writeJsonFile(packageJsonPath, pkg);
 
-  log(`  Prepared ${BEE_PACKAGE_NAME} runtime entry: ${compiledEntries.join(', ')}`);
+  log(`  Prepared ${packageLabel} runtime entry: ${compiledEntries.join(', ')}`);
   return { changed: true, compiledEntries };
 }
 
-function prepareOpenClawNeteaseBeePackage(inputTgzPath, outputDir, opts = {}) {
+function prepareTypeScriptPluginPackage(inputTgzPath, outputDir, opts = {}) {
+  const packageLabel = opts.packageLabel || 'OpenClaw plugin';
   if (!fs.existsSync(inputTgzPath)) {
-    throw new Error(`Bee package tarball not found: ${inputTgzPath}`);
+    throw new Error(`${packageLabel} package tarball not found: ${inputTgzPath}`);
   }
 
-  const sourceDir = fs.mkdtempSync(path.join(outputDir, 'openclaw-netease-bee-source-'));
+  const sourceDir = fs.mkdtempSync(path.join(outputDir, 'openclaw-plugin-source-'));
   tar.x({
     file: inputTgzPath,
     cwd: sourceDir,
@@ -165,17 +174,16 @@ function prepareOpenClawNeteaseBeePackage(inputTgzPath, outputDir, opts = {}) {
     sync: true,
   });
 
-  const result = patchBeePackageDirectory(sourceDir, opts);
+  const result = patchTypeScriptPluginPackageDirectory(sourceDir, opts);
   if (!result.changed) {
     return inputTgzPath;
   }
 
-  const patchedPackDir = fs.mkdtempSync(path.join(outputDir, 'openclaw-netease-bee-patched-'));
+  const patchedPackDir = fs.mkdtempSync(path.join(outputDir, 'openclaw-plugin-patched-'));
   return npmPackDirectory(sourceDir, patchedPackDir);
 }
 
 module.exports = {
-  BEE_PACKAGE_NAME,
-  patchBeePackageDirectory,
-  prepareOpenClawNeteaseBeePackage,
+  patchTypeScriptPluginPackageDirectory,
+  prepareTypeScriptPluginPackage,
 };

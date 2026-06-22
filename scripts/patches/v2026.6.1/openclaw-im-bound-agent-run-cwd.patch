@@ -99,6 +99,18 @@ index 236122671c..c1259b93a7 100644
        abortedLastRun,
        autoFallbackPrimaryProbe: runAutoFallbackPrimaryProbe,
      }),
+diff --git a/src/auto-reply/get-reply-options.types.ts b/src/auto-reply/get-reply-options.types.ts
+--- a/src/auto-reply/get-reply-options.types.ts
++++ b/src/auto-reply/get-reply-options.types.ts
+@@ -49,6 +49,8 @@ export type GetReplyOptions = {
+   runId?: string;
+   /** Abort signal for the underlying agent run. */
+   abortSignal?: AbortSignal;
++  /** Override the working directory for this agent run. */
++  cwd?: string;
+   /** Optional inbound images (used for webchat attachments). */
+   images?: ImageContent[];
+   /** Original inline/offloaded attachment order for inbound images. */
 diff --git a/src/config/types.agent-defaults.ts b/src/config/types.agent-defaults.ts
 index 6d4d29a7bd..297aad77b2 100644
 --- a/src/config/types.agent-defaults.ts

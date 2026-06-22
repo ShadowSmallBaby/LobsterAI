@@ -211,21 +211,28 @@ OPENCLAW_BUNDLED_PLUGINS_DIR=vendor/openclaw-runtime/current/dist/extensions
 
 这让 OpenClaw CLI 在插件安装期间稳定使用正确的 bundled channel 根目录，避免把 bundled channels 错误解析到不存在 generated module 的位置。
 
-### 3.5 Bee 专用临时兼容脚本
+### 3.5 TypeScript runtime entry 临时兼容脚本
 
-不在 `package.json` 增加通用标识，也不把 Bee 的特殊处理混入主安装逻辑。新增独立脚本：
+Bee 与 NIM 上游包都只提供 TypeScript runtime entry。通用的解包、编译、元数据修正与重打包逻辑位于：
 
 ```text
-scripts/prepare-openclaw-netease-bee.cjs
+scripts/openclaw-plugin-preparers/typescript-plugin.cjs
 ```
 
-主安装脚本只在插件 id 或 npm 包名为 `openclaw-netease-bee` 时调用该脚本。
+两个插件分别通过薄包装声明允许处理的 npm 包名：
 
-Bee 兼容流程：
+```text
+scripts/openclaw-plugin-preparers/netease-bee.cjs
+scripts/openclaw-plugin-preparers/nim-channel.cjs
+```
 
-1. `npm pack openclaw-netease-bee@0.1.3` 得到原始 tgz。
+主安装脚本只对 `openclaw-netease-bee` 和 `openclaw-nim-channel` 调用兼容脚本，不自动修改其他第三方插件包。
+
+兼容流程：
+
+1. Bee 通过 `npm pack openclaw-netease-bee@0.1.3` 得到原始 tgz；NIM 从固定 Git ref clone 后执行 `npm pack`。
 2. 解压 tgz 到临时目录。
-3. 读取包内 `package.json.openclaw.extensions`。
+3. 校验包内 `package.json#name`，并读取 `package.json.openclaw.extensions`。
 4. 如果 runtime entry 已经是 JavaScript，则不处理。
 5. 如果 runtime entry 指向 `.ts`，用 esbuild 编译为 `.mjs`。
 6. 更新包内 `package.json`：
@@ -235,7 +242,7 @@ Bee 兼容流程：
 7. 对修补后的目录重新 `npm pack`。
 8. 将修补后的 tgz 交给 `openclaw plugins install`。
 
-该方案保留 OpenClaw CLI 的最终安装与校验职责，只在 CLI 之前补齐 Bee npm 包缺失的编译产物。
+该方案保留 OpenClaw CLI 的最终安装、依赖安装与校验职责，只在 CLI 之前补齐上游包缺失的编译产物。
 
 ## 4. 实施步骤
 
@@ -244,15 +251,15 @@ Bee 兼容流程：
    - 支持新旧插件安装布局查找。
    - 复制缓存时过滤 `node_modules/openclaw` host peer 链接。
    - 调用 OpenClaw CLI 时注入 `OPENCLAW_BUNDLED_PLUGINS_DIR`。
-   - Bee 插件安装前调用专用预处理脚本。
-3. 新增 `scripts/prepare-openclaw-netease-bee.cjs`，封装 Bee tgz 修补、编译与重打包逻辑。
+   - Bee 和 NIM 插件安装前调用对应的预处理包装。
+3. 新增通用 TypeScript 插件包准备器，并由 Bee、NIM 薄包装限制允许处理的包名。
 4. 新增/补充测试：
    - 旧 `extensions` 布局查找。
    - 新 `npm/projects/.../node_modules` 布局查找。
    - 新 npm project 布局下 sibling dependencies 复制。
    - 复制插件时不复制 OpenClaw host peer 链接。
-   - Bee TypeScript runtime entry 编译与 package metadata 更新。
-   - Bee 已经是 JavaScript runtime entry 时不重复处理。
+   - Bee、NIM TypeScript runtime entry 编译与 package metadata 更新。
+   - 已经是 JavaScript runtime entry 时不重复处理。
 5. 清理本地插件/runtime 缓存后复测从零构建路径。
 
 ## 5. 涉及文件
@@ -260,10 +267,13 @@ Bee 兼容流程：
 | 文件 | 作用 |
 |------|------|
 | `package.json` | 更新指定 OpenClaw IM 插件版本 |
-| `scripts/ensure-openclaw-plugins.cjs` | 插件安装主流程；兼容新旧布局；设置 bundled plugins 目录；接入 Bee 专用预处理 |
-| `scripts/prepare-openclaw-netease-bee.cjs` | Bee npm 包临时修补、编译和重打包 |
+| `scripts/ensure-openclaw-plugins.cjs` | 插件安装主流程；兼容新旧布局；设置 bundled plugins 目录；接入 Bee/NIM 预处理 |
+| `scripts/openclaw-plugin-preparers/typescript-plugin.cjs` | TypeScript runtime entry 的通用编译、元数据修正和重打包逻辑 |
+| `scripts/openclaw-plugin-preparers/netease-bee.cjs` | Bee 包名约束与通用准备器包装 |
+| `scripts/openclaw-plugin-preparers/nim-channel.cjs` | NIM 包名约束与通用准备器包装 |
 | `tests/ensure-openclaw-plugins.test.ts` | 覆盖安装布局查找与 peer 链接过滤 |
 | `tests/prepare-openclaw-netease-bee.test.ts` | 覆盖 Bee 预处理脚本 |
+| `tests/prepare-openclaw-nim-channel.test.ts` | 覆盖 NIM 预处理脚本与 scoped 包名校验 |
 
 ## 6. 验证计划
 
@@ -271,19 +281,21 @@ Bee 兼容流程：
 
 ```bash
 node --check scripts/ensure-openclaw-plugins.cjs
-node --check scripts/prepare-openclaw-netease-bee.cjs
+node --check scripts/openclaw-plugin-preparers/typescript-plugin.cjs
+node --check scripts/openclaw-plugin-preparers/netease-bee.cjs
+node --check scripts/openclaw-plugin-preparers/nim-channel.cjs
 ```
 
 ### 6.2 单元测试
 
 ```bash
-npm test -- ensure-openclaw-plugins prepare-openclaw-netease-bee
+npm test -- ensure-openclaw-plugins prepare-openclaw-netease-bee prepare-openclaw-nim-channel
 ```
 
 预期：
 
 - 所有安装脚本相关测试通过。
-- Bee 编译测试生成 `index.mjs`，并更新 `openclaw.extensions`。
+- Bee 与 NIM 编译测试生成 `index.mjs`，并更新 `openclaw.extensions`。
 
 ### 6.3 插件安装验证
 
@@ -309,6 +321,14 @@ third-party-extensions/openclaw-netease-bee/index.mjs
 ["./index.mjs"]
 ```
 
+- NIM 安装成功，最终 runtime 中包含：
+
+```text
+third-party-extensions/openclaw-nim-channel/package.json
+third-party-extensions/openclaw-nim-channel/index.mjs
+third-party-extensions/openclaw-nim-channel/node_modules/@yxim/nim-bot
+```
+
 - Lark 与 DingTalk 的运行时依赖可从插件目录解析：
 
 ```text
@@ -330,13 +350,13 @@ npm run build
 
 ## 7. 已知限制与后续处理
 
-### 7.1 Bee 兼容方案是临时方案
+### 7.1 TypeScript 插件包兼容方案是临时方案
 
-Bee 的根因是上游 npm 包没有发布已编译 runtime JavaScript。LobsterAI 当前方案只用于保证 OpenClaw `v2026.6.1` 从零构建可用。上游发布修复版本后，应移除 Bee 专用预处理逻辑，并恢复为普通 npm 插件安装路径。
+Bee 与 NIM 的根因都是上游包没有发布已编译 runtime JavaScript。LobsterAI 当前方案只用于保证 OpenClaw `v2026.6.1` 从零构建可用。对应上游发布修复版本后，应移除插件包装；没有插件使用通用准备器时，再移除通用实现。
 
-### 7.2 NIM channel 仍为 optional
+### 7.2 NIM 上游版本元数据不一致
 
-当前 NIM channel 仍可能在 OpenClaw `v2026.6.1` 安装阶段因为包形态或 TypeScript entry 失败。该插件在 `package.json` 中为 optional，失败不会阻断构建。本次变更不处理 NIM，以避免扩大升级范围。
+NIM Git tag 为 `1.1.1`，但该 tag 的包内 `package.json#version` 仍为 `1.0.3`；其 npm 包名是 `@nimsuite/openclaw-nim-channel`，manifest id 是 `nimsuite-openclaw-nim-channel`。安装缓存继续使用 LobsterAI 声明的 Git ref 版本，运行时配置继续使用 manifest id，不在临时兼容层内改写上游版本或 manifest id。
 
 ### 7.3 POPO suspicious code pattern warning
 

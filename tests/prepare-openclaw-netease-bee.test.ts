@@ -6,7 +6,7 @@ import { describe, expect, test } from 'vitest';
 
 const {
   patchBeePackageDirectory,
-} = require('../scripts/prepare-openclaw-netease-bee.cjs');
+} = require('../scripts/openclaw-plugin-preparers/netease-bee.cjs');
 
 describe('prepare-openclaw-netease-bee', () => {
   test('compiles TypeScript runtime entries and updates package metadata', () => {
