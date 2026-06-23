@@ -264,7 +264,7 @@ import { startOpenClawTokenProxy, stopOpenClawTokenProxy } from './libs/openclaw
 import { migrateMainAgentWorkspace } from './libs/openclawWorkspaceMigration';
 import { isHiddenUserPluginId } from './libs/pluginManager';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
-import { serializeForLog } from './libs/sanitizeForLog';
+import { sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
 import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
@@ -2981,6 +2981,7 @@ type AppConfigSettings = {
   language?: string;
   useSystemProxy?: boolean;
   sqliteAutoBackupEnabled?: boolean;
+  usageAnalyticsEnabled?: boolean;
   notificationSettings?: Partial<NotificationSettings>;
   browserWebAccess?: Partial<BrowserWebAccessConfig>;
 };
@@ -9055,8 +9056,9 @@ if (!gotTheLock) {
         body?: string;
       },
     ) => {
+      const sanitizedUrl = sanitizeUrlForLog(options.url);
       console.log(
-        `[api:fetch] ${options.method} ${options.url}, headers: ${serializeForLog(options.headers)}, body: ${options.body}`,
+        `[api:fetch] ${options.method} ${sanitizedUrl}, headers: ${serializeForLog(options.headers)}, body: ${options.body}`,
       );
 
       const doFetch = async (headers: Record<string, string>) => {
@@ -9089,7 +9091,7 @@ if (!gotTheLock) {
       try {
         let result = await doFetch(options.headers);
         console.log(
-          `[api:fetch] ${options.method} ${options.url} -> ${result.status} ${result.statusText}`,
+          `[api:fetch] ${options.method} ${sanitizedUrl} -> ${result.status} ${result.statusText}`,
           typeof result.data === 'object' ? JSON.stringify(result.data) : result.data,
         );
 
@@ -9111,7 +9113,7 @@ if (!gotTheLock) {
         return result;
       } catch (error) {
         console.error(
-          `[api:fetch] ${options.method} ${options.url} -> ERROR:`,
+          `[api:fetch] ${options.method} ${sanitizedUrl} -> ERROR:`,
           error instanceof Error ? error.message : error,
         );
         return {
