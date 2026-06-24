@@ -34,6 +34,8 @@ export const LogReporterAction = {
   ImGatewayToggled: 'lobsterai_im_gateway_toggled',
   ImInstanceChanged: 'lobsterai_im_instance_changed',
   ImSettingsSaved: 'lobsterai_im_settings_saved',
+  MemoryEntryChanged: 'lobsterai_memory_entry_changed',
+  MemorySettingChanged: 'lobsterai_memory_setting_changed',
   McpEnabled: 'lobsterai_mcp_enabled',
   ModelSelected: 'lobsterai_model_selected',
   PlanModeEnabled: 'lobsterai_plan_mode_enabled',

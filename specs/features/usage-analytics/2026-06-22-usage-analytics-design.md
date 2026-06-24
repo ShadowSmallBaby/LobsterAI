@@ -408,6 +408,42 @@ export const LogReporterActionPrefix = {
   - 不上传邮箱地址、密码/授权码、IMAP/SMTP host、端口、测试错误详情、测试项 message 或 AI 诊断 prompt。
   - 失败只通过 `result=fail` 和测试项级别表达，不上传原始异常文本。
 
+#### 2.4.21 `lobsterai_memory_setting_changed`
+
+- 状态：已实现。
+- 触发时机：用户在「设置 -> 记忆」修改记忆或 Embedding 相关配置，并且设置页保存成功后发送。未保存、保存失败或配置无变化不发送。
+- 事件含义：统计记忆功能和 Embedding 语义搜索配置的使用情况。
+- 发送口径：
+  - 根据保存前后的 `coworkConfig` 做 diff，同一次保存只发送一条摘要事件。
+  - 仅记录配置项状态和变化类型，不记录记忆条目内容或远程服务配置详情。
+- 业务参数：
+  - `source`：string，触发来源。当前固定为 `settings_memory`。
+  - `changedKeys`：string，本次变化类型的去重列表，使用逗号分隔。当前取值包括 `memory_enabled`、`llm_judge_enabled`、`embedding_enabled`、`embedding_provider`、`embedding_model`、`embedding_base_url`、`embedding_api_key`、`embedding_vector_weight`。
+  - `memoryEnabled`：boolean，保存后是否启用用户记忆。
+  - `memoryLlmJudgeEnabled`：boolean，保存后是否启用 LLM 二次判断。
+  - `embeddingEnabled`：boolean，保存后是否启用 Embedding 语义搜索。
+  - `embeddingProvider`：string，保存后的 Embedding provider。当前取值包括 `openai`、`gemini`、`voyage`、`mistral`、`ollama`。
+  - `hasEmbeddingModel`：boolean，保存后是否填写了 Embedding 模型。
+  - `hasEmbeddingBaseUrl`：boolean，保存后是否填写了远程 Base URL。
+  - `hasEmbeddingApiKey`：boolean，保存后是否填写了远程 API Key。
+  - `embeddingVectorWeight`：number，保存后的语义重排权重，范围为 0-1。
+- 隐私边界：
+  - 不上传记忆条目内容、搜索词、Embedding 模型名称、远程 Base URL、API Key、本地模型路径或文件路径。
+  - `embedding_model`、`embedding_base_url` 和 `embedding_api_key` 只表示对应字段发生变化，不上传实际值。
+
+#### 2.4.22 `lobsterai_memory_entry_changed`
+
+- 状态：已实现。
+- 触发时机：用户在「设置 -> 记忆」手动新增、编辑或删除记忆条目，并且操作成功后发送。操作失败不发送。
+- 事件含义：统计用户手动管理记忆条目的使用情况。
+- 业务参数：
+  - `source`：string，触发来源。当前固定为 `settings_memory`。
+  - `operation`：string，条目操作类型。当前取值包括 `created`、`updated`、`deleted`。
+  - `entryCount`：number，操作后本地可见记忆条目数量的摘要估算；无法可靠获取时不发送。
+- 隐私边界：
+  - 不上传记忆条目正文、条目 ID、搜索词、来源信息、创建/更新时间或删除原因。
+  - 不记录用户打开编辑弹窗、输入草稿或搜索列表的行为，只记录持久化成功后的 CRUD 操作。
+
 ### 2.5 请求流程
 
 ```text

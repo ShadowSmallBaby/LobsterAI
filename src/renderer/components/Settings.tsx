@@ -154,11 +154,24 @@ const SettingsAnalyticsSource = {
   Appearance: 'settings_appearance',
   Browser: 'settings_browser',
   General: 'settings_general',
+  Memory: 'settings_memory',
   Model: 'settings_model',
 } as const;
 
 type SettingsAnalyticsValue = string | boolean | number;
 type ProviderAnalyticsKind = 'builtin' | 'custom' | 'local';
+
+type MemorySettingAnalyticsSummary = {
+  changedKeys: string;
+  embeddingEnabled: boolean;
+  embeddingProvider: string;
+  embeddingVectorWeight: number;
+  hasEmbeddingApiKey: boolean;
+  hasEmbeddingBaseUrl: boolean;
+  hasEmbeddingModel: boolean;
+  memoryEnabled: boolean;
+  memoryLlmJudgeEnabled: boolean;
+};
 
 type CustomModelSettingsAnalyticsSummary = {
   changedKeys: string;
@@ -303,6 +316,71 @@ const buildBrowserSettingAnalyticsParams = (
   };
 };
 
+const buildMemorySettingAnalyticsSummary = (
+  previousConfig: {
+    embeddingEnabled: boolean;
+    embeddingModel: string;
+    embeddingProvider: string;
+    embeddingRemoteApiKey: string;
+    embeddingRemoteBaseUrl: string;
+    embeddingVectorWeight: number;
+    memoryEnabled: boolean;
+    memoryLlmJudgeEnabled: boolean;
+  },
+  nextConfig: {
+    embeddingEnabled: boolean;
+    embeddingModel: string;
+    embeddingProvider: string;
+    embeddingRemoteApiKey: string;
+    embeddingRemoteBaseUrl: string;
+    embeddingVectorWeight: number;
+    memoryEnabled: boolean;
+    memoryLlmJudgeEnabled: boolean;
+  },
+): MemorySettingAnalyticsSummary | null => {
+  const changedKeys = new Set<string>();
+  if (previousConfig.memoryEnabled !== nextConfig.memoryEnabled) {
+    changedKeys.add('memory_enabled');
+  }
+  if (previousConfig.memoryLlmJudgeEnabled !== nextConfig.memoryLlmJudgeEnabled) {
+    changedKeys.add('llm_judge_enabled');
+  }
+  if (previousConfig.embeddingEnabled !== nextConfig.embeddingEnabled) {
+    changedKeys.add('embedding_enabled');
+  }
+  if (previousConfig.embeddingProvider !== nextConfig.embeddingProvider) {
+    changedKeys.add('embedding_provider');
+  }
+  if (previousConfig.embeddingModel !== nextConfig.embeddingModel) {
+    changedKeys.add('embedding_model');
+  }
+  if (previousConfig.embeddingRemoteBaseUrl !== nextConfig.embeddingRemoteBaseUrl) {
+    changedKeys.add('embedding_base_url');
+  }
+  if (previousConfig.embeddingRemoteApiKey !== nextConfig.embeddingRemoteApiKey) {
+    changedKeys.add('embedding_api_key');
+  }
+  if (previousConfig.embeddingVectorWeight !== nextConfig.embeddingVectorWeight) {
+    changedKeys.add('embedding_vector_weight');
+  }
+
+  if (changedKeys.size === 0) {
+    return null;
+  }
+
+  return {
+    changedKeys: Array.from(changedKeys).sort().join(','),
+    embeddingEnabled: nextConfig.embeddingEnabled,
+    embeddingProvider: nextConfig.embeddingProvider,
+    embeddingVectorWeight: nextConfig.embeddingVectorWeight,
+    hasEmbeddingApiKey: nextConfig.embeddingRemoteApiKey.trim().length > 0,
+    hasEmbeddingBaseUrl: nextConfig.embeddingRemoteBaseUrl.trim().length > 0,
+    hasEmbeddingModel: nextConfig.embeddingModel.trim().length > 0,
+    memoryEnabled: nextConfig.memoryEnabled,
+    memoryLlmJudgeEnabled: nextConfig.memoryLlmJudgeEnabled,
+  };
+};
+
 const reportGeneralSettingChanged = (
   settingKey: string,
   settingValue: SettingsAnalyticsValue,
@@ -343,6 +421,30 @@ const reportBrowserSettingChanged = (
     action: LogReporterAction.BrowserSettingChanged,
     source: SettingsAnalyticsSource.Browser,
     ...params,
+  });
+};
+
+const reportMemorySettingChanged = (
+  summary: MemorySettingAnalyticsSummary,
+): void => {
+  console.debug('[Settings] reporting memory setting analytics');
+  void reportYdAnalyzer({
+    action: LogReporterAction.MemorySettingChanged,
+    source: SettingsAnalyticsSource.Memory,
+    ...summary,
+  });
+};
+
+const reportMemoryEntryChanged = (
+  operation: 'created' | 'updated' | 'deleted',
+  entryCount?: number,
+): void => {
+  console.debug('[Settings] reporting memory entry analytics');
+  void reportYdAnalyzer({
+    action: LogReporterAction.MemoryEntryChanged,
+    source: SettingsAnalyticsSource.Memory,
+    operation,
+    entryCount,
   });
 };
 
@@ -2405,6 +2507,7 @@ const Settings: React.FC<SettingsProps> = ({
 
     setCoworkMemoryListLoading(true);
     try {
+      const operation = coworkMemoryEditingId ? 'updated' : 'created';
       if (coworkMemoryEditingId) {
         await coworkService.updateMemoryEntry({
           id: coworkMemoryEditingId,
@@ -2417,6 +2520,12 @@ const Settings: React.FC<SettingsProps> = ({
       }
       resetCoworkMemoryEditor();
       await loadCoworkMemoryData();
+      reportMemoryEntryChanged(
+        operation,
+        operation === 'created'
+          ? (coworkMemoryStats?.total ?? coworkMemoryEntries.length) + 1
+          : coworkMemoryStats?.total,
+      );
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : i18nService.t('coworkMemoryCrudSaveFailed'));
     } finally {
@@ -2438,6 +2547,10 @@ const Settings: React.FC<SettingsProps> = ({
         resetCoworkMemoryEditor();
       }
       await loadCoworkMemoryData();
+      reportMemoryEntryChanged(
+        'deleted',
+        Math.max(0, (coworkMemoryStats?.total ?? coworkMemoryEntries.length) - 1),
+      );
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : i18nService.t('coworkMemoryCrudDeleteFailed'));
     } finally {
@@ -2604,6 +2717,26 @@ const Settings: React.FC<SettingsProps> = ({
       const previousAgentEngine = coworkConfig.agentEngine || 'openclaw';
       const previousOpenClawSessionKeepAlive = coworkConfig.openClawSessionPolicy?.keepAlive
         || OpenClawSessionKeepAliveValues.ThirtyDays;
+      const previousMemorySettings = {
+        embeddingEnabled: coworkConfig.embeddingEnabled ?? false,
+        embeddingModel: coworkConfig.embeddingModel ?? '',
+        embeddingProvider: coworkConfig.embeddingProvider ?? 'openai',
+        embeddingRemoteApiKey: coworkConfig.embeddingRemoteApiKey ?? '',
+        embeddingRemoteBaseUrl: coworkConfig.embeddingRemoteBaseUrl ?? '',
+        embeddingVectorWeight: coworkConfig.embeddingVectorWeight ?? 0.7,
+        memoryEnabled: coworkConfig.memoryEnabled ?? true,
+        memoryLlmJudgeEnabled: coworkConfig.memoryLlmJudgeEnabled ?? false,
+      };
+      const nextMemorySettings = {
+        embeddingEnabled,
+        embeddingModel,
+        embeddingProvider,
+        embeddingRemoteApiKey,
+        embeddingRemoteBaseUrl,
+        embeddingVectorWeight,
+        memoryEnabled: coworkMemoryEnabled,
+        memoryLlmJudgeEnabled: coworkMemoryLlmJudgeEnabled,
+      };
       const previousTaskCompletionNotificationsEnabled = normalizeNotificationSettings(
         previousConfig.notificationSettings,
       ).taskCompletionNotificationsEnabled;
@@ -2758,6 +2891,13 @@ const Settings: React.FC<SettingsProps> = ({
             openClawSessionKeepAlive,
             previousOpenClawSessionKeepAlive,
           );
+        }
+        const memorySettingsSummary = buildMemorySettingAnalyticsSummary(
+          previousMemorySettings,
+          nextMemorySettings,
+        );
+        if (memorySettingsSummary) {
+          reportMemorySettingChanged(memorySettingsSummary);
         }
         const customModelSettingsSummary = buildCustomModelSettingsAnalyticsSummary(
           previousProviders,
