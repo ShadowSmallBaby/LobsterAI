@@ -5197,6 +5197,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (!sessionId) {
+      if (stream === 'lifecycle'
+        && (lifecyclePhase === AgentLifecyclePhase.End || lifecyclePhase === AgentLifecyclePhase.Error)) {
+        console.warn(
+          '[OpenClawRuntime] dropping terminal agent lifecycle event because no sessionId resolved',
+          `phase=${lifecyclePhase}`,
+          `runId=${runId || 'unknown'}`,
+          `sessionKey=${sessionKey || 'unknown'}`,
+        );
+      }
       console.log('[Debug:handleAgentEvent] no sessionId, dropping event. runId:', runId, 'sessionKey:', sessionKey);
       if (runId) {
         this.enqueuePendingAgentEvent(runId, agentPayload, seq);
@@ -5210,6 +5219,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const turn = this.activeTurns.get(sessionId);
     if (!turn) {
+      if (stream === 'lifecycle'
+        && (lifecyclePhase === AgentLifecyclePhase.End || lifecyclePhase === AgentLifecyclePhase.Error)) {
+        console.warn(
+          '[OpenClawRuntime] dropping terminal agent lifecycle event because no active turn exists',
+          `phase=${lifecyclePhase}`,
+          `sessionId=${sessionId}`,
+          `runId=${runId || 'unknown'}`,
+          `sessionKey=${sessionKey || 'unknown'}`,
+        );
+      }
       console.log('[Debug:handleAgentEvent] no active turn for sessionId:', sessionId);
       return;
     }
@@ -6224,6 +6243,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const sessionId = this.resolveSessionIdFromChatPayload(chatPayload);
     if (!sessionId) {
+      if (state === 'final' || state === 'aborted' || state === 'error') {
+        console.warn(
+          '[OpenClawRuntime] dropping terminal chat event because no sessionId resolved',
+          `state=${state}`,
+          `runId=${runId || 'unknown'}`,
+          `sessionKey=${typeof chatPayload.sessionKey === 'string' ? chatPayload.sessionKey : 'unknown'}`,
+          `message=${summarizeGatewayMessageShape(chatPayload.message)}`,
+        );
+      }
       console.debug('[OpenClawRuntime] handleChatEvent — no sessionId resolved, dropping event');
       return;
     }
