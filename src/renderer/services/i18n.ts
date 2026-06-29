@@ -1007,7 +1007,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkQuestionWizardSelectAtLeastOne: '请至少选择一个选项',
     coworkQuestionWizardAnswerRequired: '请选择或输入答案',
     coworkWelcome: 'LobsterAI',
-    coworkDescription: '7×24 小时帮你干活的全场景个人助理 Agent',
+    coworkDescription: '全场景办公助手 Agent',
     coworkCurrentAgent: '当前 Agent',
     coworkSelectAgent: '选择 Agent',
 
@@ -3591,14 +3591,14 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkQuestionWizardSelectAtLeastOne: 'Please select at least one option',
     coworkQuestionWizardAnswerRequired: 'Please select or enter an answer',
     coworkWelcome: 'LobsterAI',
-    coworkDescription: 'A 24/7 personal assistant agent that gets work done for you',
+    coworkDescription: 'All-scenario office assistant Agent',
     coworkCurrentAgent: 'Current Agent',
     coworkSelectAgent: 'Select Agent',
 
     // Multi-Agent management
     createAgent: 'Create Agent',
     myAgents: 'My Agents',
-    defaultAgentDisplayName: 'Primary Agent',
+    defaultAgentDisplayName: 'Main Agent',
     myAgentSidebarPinned: 'Pinned',
     myAgentSidebarExpandMore: 'Show more',
     myAgentSidebarCollapse: 'Show less',
@@ -4334,7 +4334,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     connecting: 'Connecting',
     pendingSave: 'Pending save',
     imAgentBinding: 'Responding Agent',
-    imAgentBindingDefault: 'Default (Primary Agent)',
+    imAgentBindingDefault: 'Default (Main Agent)',
     imAgentBindingHint:
       'Select the Agent that responds to messages on this platform. Different Agents have different personas and skill configurations.',
     kickedByOtherClient: 'Account logged in elsewhere',
@@ -4830,7 +4830,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksFormDescription: 'Description',
     scheduledTasksFormDescriptionPlaceholder: 'Optional task description',
     scheduledTasksFormAgentId: 'Agent ID',
-    scheduledTasksFormAgentIdPlaceholder: 'Optional, leave blank to use Primary Agent',
+    scheduledTasksFormAgentIdPlaceholder: 'Optional, leave blank to use Main Agent',
     scheduledTasksFormScheduleType: 'Plan',
     scheduledTasksFormScheduleModeEvery: 'Every',
     scheduledTasksFormScheduleModeAt: 'At',
