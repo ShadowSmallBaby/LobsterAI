@@ -221,7 +221,7 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({ task, runs }) => {
                       {run.error}
                     </span>
                   )}
-                  {(run.sessionId || run.sessionKey) && (
+                  {(run.sessionId || run.sessionKey || run.summary || run.error) && (
                     <button
                       type="button"
                       onClick={() => {
@@ -258,6 +258,8 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({ task, runs }) => {
         <RunSessionModal
           sessionId={viewingRun.sessionId}
           sessionKey={viewingRun.sessionKey}
+          runSummary={viewingRun.summary}
+          runError={viewingRun.error}
           onClose={() => setViewingRun(null)}
         />
       )}

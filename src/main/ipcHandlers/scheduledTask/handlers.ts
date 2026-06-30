@@ -44,7 +44,10 @@ export interface ScheduledTaskHandlerDeps {
   getOpenClawRuntimeAdapter: () => {
     getGatewayClient: () => unknown;
     connectGatewayIfNeeded: () => Promise<void>;
-    fetchSessionByKey: (sessionKey: string) => Promise<unknown>;
+    fetchSessionByKey: (
+      sessionKey: string,
+      options?: { sessionId?: string | null },
+    ) => Promise<unknown>;
   } | null;
 }
 
@@ -276,19 +279,29 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
     },
   );
 
-  ipcMain.handle(ScheduledTaskIpc.ResolveSession, async (_event, sessionKey: string) => {
-    try {
-      if (!sessionKey) return { success: true, session: null };
-      // Fetch session history from OpenClaw (returns transient session, not persisted)
-      const session = await getOpenClawRuntimeAdapter()?.fetchSessionByKey(sessionKey);
-      return { success: true, session: session ?? null };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to resolve session',
-      };
-    }
-  });
+  ipcMain.handle(
+    ScheduledTaskIpc.ResolveSession,
+    async (
+      _event,
+      input: string | { sessionId?: string | null; sessionKey?: string | null },
+    ) => {
+      try {
+        const sessionKey = typeof input === 'string' ? input : (input.sessionKey ?? '');
+        const sessionId = typeof input === 'string' ? null : (input.sessionId ?? null);
+        if (!sessionKey) return { success: true, session: null };
+        // Fetch session history from OpenClaw (returns transient session, not persisted)
+        const session = await getOpenClawRuntimeAdapter()?.fetchSessionByKey(sessionKey, {
+          sessionId,
+        });
+        return { success: true, session: session ?? null };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to resolve session',
+        };
+      }
+    },
+  );
 
   ipcMain.handle(ScheduledTaskIpc.ListChannels, async () => {
     try {
