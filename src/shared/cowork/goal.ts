@@ -96,9 +96,7 @@ export function formatCoworkGoalUsage(goal: CoworkGoal): string | null {
   return goal.tokensUsed > 0 ? `${formatCoworkGoalTokenCount(goal.tokensUsed)} used` : null;
 }
 
-export function formatCoworkGoalElapsed(goal: CoworkGoal, now = Date.now()): string | null {
-  if (goal.status !== CoworkGoalStatus.Active) return null;
-  const elapsedMs = Math.max(0, now - goal.createdAt);
+function formatCoworkGoalDurationMs(elapsedMs: number): string | null {
   const totalSeconds = Math.floor(elapsedMs / 1000);
   if (totalSeconds < 1) return null;
   const hours = Math.floor(totalSeconds / 3600);
@@ -107,4 +105,15 @@ export function formatCoworkGoalElapsed(goal: CoworkGoal, now = Date.now()): str
   if (hours > 0) return `${hours}h ${minutes}m`;
   if (minutes > 0) return `${minutes}m ${seconds}s`;
   return `${seconds}s`;
+}
+
+export function formatCoworkGoalElapsed(goal: CoworkGoal, now = Date.now()): string | null {
+  if (goal.status !== CoworkGoalStatus.Active) return null;
+  return formatCoworkGoalDurationMs(Math.max(0, now - goal.createdAt));
+}
+
+export function formatCoworkGoalCompletionDuration(goal: CoworkGoal): string | null {
+  if (goal.status !== CoworkGoalStatus.Complete) return null;
+  const completedAt = goal.completedAt ?? goal.updatedAt;
+  return formatCoworkGoalDurationMs(Math.max(0, completedAt - goal.createdAt));
 }

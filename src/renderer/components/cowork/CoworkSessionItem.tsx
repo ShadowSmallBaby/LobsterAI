@@ -1,6 +1,7 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { stripGoalCommandPrefixForDisplay } from '../../../common/sessionTitle';
 import { type CoworkGoal, CoworkGoalStatus } from '../../../shared/cowork/goal';
 import { i18nService } from '../../services/i18n';
 import type { CoworkSessionStatus, CoworkSessionSummary } from '../../types/cowork';
@@ -255,6 +256,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
   const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
   const showRelativeTime = !showStatusIndicator;
+  const displayTitle = stripGoalCommandPrefixForDisplay(session.title).trim() || session.title;
   const batchLabel = i18nService.t('batchOperations');
   const goalStatusLabel = session.goal ? getGoalStatusLabel(session.goal) : null;
   const goalTitle = session.goal ? `${goalStatusLabel}: ${session.goal.objective}` : undefined;
@@ -343,7 +345,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               />
             ) : (
               <h3 className="text-sm font-medium text-foreground truncate">
-                {session.title}
+                {displayTitle}
               </h3>
             )}
           </div>

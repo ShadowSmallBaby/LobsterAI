@@ -1,6 +1,7 @@
 import { PhotoIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useMemo, useState } from 'react';
 
+import { hasGoalSettingMessageMetadata } from '../../../common/goalCommandDisplay';
 import type { CoworkImageAttachmentPreview } from '../../../shared/cowork/imageAttachments';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import type { KitReference } from '../../../shared/kit/constants';
@@ -13,6 +14,7 @@ import type { Skill } from '../../types/skill';
 import { formatMessageDateTime } from '../../utils/tokenFormat';
 import { parseUserMessageForDisplay } from '../../utils/userMessageDisplay';
 import EditIcon from '../icons/EditIcon';
+import GoalIcon from '../icons/GoalIcon';
 import MessageCopyIcon from '../icons/MessageCopyIcon';
 import SidebarKitsIcon from '../icons/SidebarKitsIcon';
 import SkillIcon from '../icons/SkillIcon';
@@ -196,6 +198,7 @@ const UserMessageItem: React.FC<{
   }, []);
 
   const metadata = message.metadata as CoworkMessageMetadata | undefined;
+  const isGoalSettingMessage = hasGoalSettingMessageMetadata(metadata);
   const displayContent = useMemo(
     () => parseUserMessageForDisplay(message.content || '', {
       localMediaAttachments: Array.isArray(metadata?.localMediaAttachments)
@@ -301,7 +304,13 @@ const UserMessageItem: React.FC<{
                   </div>
                 )}
               </div>
-              <div className={messageMetaClassName(isHovered, 'right')} aria-hidden={!isHovered}>
+              <div className={messageMetaClassName(isHovered || isGoalSettingMessage, 'right')} aria-hidden={!isHovered && !isGoalSettingMessage}>
+                {isGoalSettingMessage && (
+                  <span className="inline-flex items-center gap-1 text-secondary">
+                    <GoalIcon className="h-3.5 w-3.5" />
+                    <span>{i18nService.t('coworkGoalSetAsGoal')}</span>
+                  </span>
+                )}
                 <span>{formatMessageDateTime(message.timestamp)}</span>
                 {modelLabel && <span>{modelLabel}</span>}
                 <CopyButton

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   CoworkGoalStatus,
+  formatCoworkGoalCompletionDuration,
   formatCoworkGoalElapsed,
   formatCoworkGoalUsage,
   normalizeCoworkGoal,
@@ -49,5 +50,20 @@ describe('cowork goal helpers', () => {
     expect(formatCoworkGoalUsage(goal)).toBe('12k/50k');
     expect(formatCoworkGoalElapsed(goal, 331_000)).toBe('5m 30s');
     expect(formatCoworkGoalElapsed({ ...goal, status: CoworkGoalStatus.Paused }, 331_000)).toBeNull();
+  });
+
+  test('formats completed goal duration', () => {
+    const goal = {
+      id: 'goal-1',
+      objective: 'Ship',
+      status: CoworkGoalStatus.Complete,
+      createdAt: 1000,
+      updatedAt: 383_000,
+      completedAt: 383_000,
+      tokensUsed: 0,
+    };
+
+    expect(formatCoworkGoalCompletionDuration(goal)).toBe('6m 22s');
+    expect(formatCoworkGoalCompletionDuration({ ...goal, status: CoworkGoalStatus.Active })).toBeNull();
   });
 });

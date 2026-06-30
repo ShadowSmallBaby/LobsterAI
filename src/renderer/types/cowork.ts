@@ -88,6 +88,10 @@ export interface CoworkMessageMetadata {
   model?: string;
   agentName?: string;
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
+  goalSetting?: {
+    action: 'start' | 'create' | 'set';
+    objective: string;
+  };
   localMediaAttachments?: Array<{
     localPath: string;
     mimeType?: string;

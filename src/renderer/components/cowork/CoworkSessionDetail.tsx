@@ -7,6 +7,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { stripGoalCommandPrefixForDisplay } from '../../../common/sessionTitle';
+import { CoworkGoalStatus } from '../../../shared/cowork/goal';
 import type { CoworkImageAttachmentPreview } from '../../../shared/cowork/imageAttachments';
 import {
   COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH,
@@ -81,7 +83,6 @@ import {
   bucketLength,
   reportConversationNavigationAction,
 } from './conversationAnalytics';
-import CoworkGoalControl from './CoworkGoalControl';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import LazyRenderTurn, { clearHeightCache } from './LazyRenderTurn';
 import {
@@ -247,6 +248,10 @@ const getRailLabel = (content: string, fallback: string, maxLength = 50): string
     .join('\n');
   const stripped = stripRailLabelMarkdown(labelSource || content);
   return stripped.slice(0, maxLength) || fallback;
+};
+
+const getSessionTitleForDisplay = (title: string | null | undefined): string => {
+  return stripGoalCommandPrefixForDisplay(title ?? '').trim();
 };
 
 const isAssistantRailContentMessage = (message: CoworkMessage): boolean => (
@@ -1138,17 +1143,21 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   // Clear lazy-render height cache when session changes
   const sessionId = currentSession?.id;
   const handleGoalCommand = useCallback((command: string) => {
-    if (!currentSession?.id || isSessionBusy || currentSession.status === CoworkSessionStatusValue.Running) return;
+    if (!currentSession?.id) return Promise.resolve(false);
     const goalAction = command.split(/\s+/, 2)[1] ?? 'unknown';
     console.debug(`[CoworkGoal] dispatching goal command action=${goalAction} for session ${currentSession.id}.`);
-    void Promise.resolve(onContinue(command)).catch((error) => {
+    return coworkService.runGoalCommand({
+      sessionId: currentSession.id,
+      command,
+    }).catch((error) => {
       console.warn(`[CoworkGoal] goal command action=${goalAction} failed for session ${currentSession.id}.`, error);
+      return false;
     }).finally(() => {
       if (currentSession.id) {
         void coworkService.refreshContextUsage(currentSession.id, { notifyCompaction: false });
       }
     });
-  }, [currentSession?.id, currentSession?.status, isSessionBusy, onContinue]);
+  }, [currentSession?.id]);
   const latestProposedPlan = useMemo(
     () => currentSession ? findLatestProposedPlan(currentSession.messages) : null,
     [currentSession],
@@ -3700,6 +3709,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             resolveLocalFilePath={resolveLocalFilePath}
             showTypingIndicator
             showCopyButtons={!isStreaming}
+            completedGoal={
+              currentSession.goal?.status === CoworkGoalStatus.Complete
+                ? currentSession.goal
+                : null
+            }
             planConfirmationMessageId={planConfirmationMessageId}
             onConfirmPlan={handleConfirmPlan}
             onAdjustPlan={handleAdjustPlan}
@@ -3772,6 +3786,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 onForkMessage={remoteManaged ? undefined : handleForkMessage}
                 showTypingIndicator={showTypingIndicator}
                 showCopyButtons={!isStreaming || !isLastTurn}
+                completedGoal={
+                  isLastTurn && currentSession.goal?.status === CoworkGoalStatus.Complete
+                    ? currentSession.goal
+                    : null
+                }
                 planConfirmationMessageId={planConfirmationMessageId}
                 onConfirmPlan={handleConfirmPlan}
                 onAdjustPlan={handleAdjustPlan}
@@ -3812,7 +3831,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             </div>
           )}
           <h1 className="text-sm leading-none font-medium text-foreground truncate max-w-[360px]">
-            {currentSession.title || i18nService.t('coworkNewSession')}
+            {getSessionTitleForDisplay(currentSession.title) || i18nService.t('coworkNewSession')}
           </h1>
         </div>
 
@@ -4467,13 +4486,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             onGoalCommand={!remoteManaged && currentSession?.id ? handleGoalCommand : undefined}
             contextUsageControl={(
               <div className="flex min-w-0 items-center gap-2">
-                {!remoteManaged && currentSession?.id && (
-                  <CoworkGoalControl
-                    goal={currentSession.goal}
-                    disabled={isSessionBusy || currentSession.status === CoworkSessionStatusValue.Running}
-                    onCommand={handleGoalCommand}
-                  />
-                )}
                 <div ref={compactConfirmRef} className="relative inline-flex flex-shrink-0">
                   <ContextUsageIndicator
                     usage={contextUsage}

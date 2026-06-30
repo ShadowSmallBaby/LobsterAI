@@ -643,6 +643,13 @@ interface IElectronAPI {
       code?: string;
       engineStatus?: OpenClawEngineStatus;
     }>;
+    runGoalCommand: (options: { sessionId: string; command: string }) => Promise<{
+      success: boolean;
+      goal?: CoworkGoal | null;
+      error?: string;
+      code?: string;
+      engineStatus?: OpenClawEngineStatus;
+    }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSessions: (sessionIds: string[]) => Promise<{ success: boolean; error?: string }>;

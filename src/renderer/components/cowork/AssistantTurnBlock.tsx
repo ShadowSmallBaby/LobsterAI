@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { classifyErrorKey } from '../../../common/coworkErrorClassify';
 import { ContextCompactionStatus } from '../../../common/coworkSystemMessages';
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
+import type { CoworkGoal } from '../../../shared/cowork/goal';
 import { dedupeArtifactsForDisplay } from '../../services/artifactParser';
 import { i18nService } from '../../services/i18n';
 import type { Artifact } from '../../types/artifact';
@@ -203,6 +204,7 @@ const AssistantTurnBlock: React.FC<{
   onAdjustPlan?: (messageId: string) => void;
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
+  completedGoal?: CoworkGoal | null;
 }> = ({
   turn,
   artifacts,
@@ -216,6 +218,7 @@ const AssistantTurnBlock: React.FC<{
   onAdjustPlan,
   showTypingIndicator = false,
   showCopyButtons = true,
+  completedGoal,
 }) => {
   const [artifactCardsExpanded, setArtifactCardsExpanded] = useState(false);
   const visibleAssistantItems = getVisibleAssistantItems(turn.assistantItems);
@@ -403,6 +406,9 @@ const AssistantTurnBlock: React.FC<{
                   .slice(index + 1)
                   .some(laterItem => laterItem.type === 'tool_group' || laterItem.type === 'media_polling_group');
                 const isLastAssistant = showCopyButtons && !hasToolGroupAfter;
+                const hasAssistantAfter = consolidatedItems
+                  .slice(index + 1)
+                  .some(laterItem => laterItem.type === 'assistant');
 
                 return (
                   <AssistantMessageItem
@@ -413,6 +419,7 @@ const AssistantTurnBlock: React.FC<{
                     showCopyButton={isLastAssistant}
                     onFork={isLastAssistant ? onForkMessage : undefined}
                     turnMetadata={isLastAssistant ? (item.message.metadata as CoworkMessageMetadata) : undefined}
+                    completedGoal={isLastAssistant && !hasAssistantAfter ? completedGoal : null}
                     planConfirmationMessageId={planConfirmationMessageId}
                     onConfirmPlan={onConfirmPlan}
                     onAdjustPlan={onAdjustPlan}
