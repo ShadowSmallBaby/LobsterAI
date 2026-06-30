@@ -1323,7 +1323,9 @@ interface IElectronAPI {
       runs?: import('../../scheduledTask/types').ScheduledTaskRunWithName[];
       error?: string;
     }>;
-    resolveSession: (sessionKey: string) => Promise<{
+    resolveSession: (
+      input: string | { sessionId?: string | null; sessionKey?: string | null },
+    ) => Promise<{
       success: boolean;
       session?: import('./cowork').CoworkSession | null;
       error?: string;

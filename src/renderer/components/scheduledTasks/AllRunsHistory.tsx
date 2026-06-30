@@ -124,7 +124,7 @@ const AllRunsHistory: React.FC = () => {
   };
 
   const handleViewSession = (run: ScheduledTaskRunWithName) => {
-    if (run.sessionId || run.sessionKey) {
+    if (run.sessionId || run.sessionKey || run.summary || run.error) {
       reportScheduledTaskAction('history_view_session', {
         source: 'scheduled_tasks_history',
         ...getRunAnalyticsParams(run),
@@ -250,12 +250,12 @@ const AllRunsHistory: React.FC = () => {
             <div className="p-2">
               {displayedRuns.map(run => {
                 const cfg = statusConfig[run.status];
-                const hasSession = run.sessionId || run.sessionKey;
+                const canViewRun = run.sessionId || run.sessionKey || run.summary || run.error;
                 return (
                   <div
                     key={run.id}
                     className={`${historyGridClass} rounded-md px-3 py-3 transition-colors ${
-                      hasSession ? 'hover:bg-surface-raised/60 cursor-pointer' : ''
+                      canViewRun ? 'hover:bg-surface-raised/60 cursor-pointer' : ''
                     }`}
                     onClick={() => handleViewSession(run)}
                   >
@@ -323,6 +323,8 @@ const AllRunsHistory: React.FC = () => {
           <RunSessionModal
             sessionId={viewingRun.sessionId}
             sessionKey={viewingRun.sessionKey}
+            runSummary={viewingRun.summary}
+            runError={viewingRun.error}
             onClose={() => setViewingRun(null)}
           />
         )}
