@@ -9,6 +9,7 @@ import path from 'path';
 
 import { cpRecursiveSync } from './fsCompat';
 import { getElectronNodeRuntimePath } from './libs/coworkUtil';
+import { resolveNodeRuntimeForSpawn } from './libs/nodeRuntime';
 import { appendPythonRuntimeToEnv } from './libs/pythonRuntime';
 
 /**
@@ -72,6 +73,17 @@ function buildSkillServiceEnv(): Record<string, string | undefined> {
   appendPythonRuntimeToEnv(env);
 
   return env;
+}
+
+function resolveSkillServiceNodeRuntime(
+  env: NodeJS.ProcessEnv,
+): { command: string; args: string[]; extraEnv?: NodeJS.ProcessEnv } {
+  const runtime = resolveNodeRuntimeForSpawn(env);
+  return {
+    command: runtime.command,
+    args: runtime.args,
+    extraEnv: Object.keys(runtime.env).length > 0 ? runtime.env : undefined,
+  };
 }
 
 export class SkillServiceManager {
@@ -215,15 +227,7 @@ export class SkillServiceManager {
   private resolveNodeRuntime(
     env: NodeJS.ProcessEnv
   ): { command: string; args: string[]; extraEnv?: NodeJS.ProcessEnv } {
-    if (this.hasCommand('node', env)) {
-      return { command: 'node', args: [] };
-    }
-
-    return {
-      command: getElectronNodeRuntimePath(),
-      args: [],
-      extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
-    };
+    return resolveSkillServiceNodeRuntime(env);
   }
 
   private ensureWebSearchRuntimeReady(skillPath: string): void {
@@ -502,3 +506,7 @@ export function getSkillServiceManager(): SkillServiceManager {
   }
   return serviceManager;
 }
+
+export const __skillServicesTestUtils = {
+  resolveSkillServiceNodeRuntime,
+};
