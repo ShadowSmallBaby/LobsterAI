@@ -50,6 +50,12 @@ Renderer:
 - If a session already exists, submitting goal input calls `onGoalCommand`.
 - Goal status-bar buttons call `onGoalCommand` directly and are not disabled by
   streaming state.
+- Goal input can be opened while a session is streaming. Submitting it sends
+  `set` through goal IPC and must bypass the normal "session still running"
+  chat guard.
+- Successful existing-session `start`, `create`, and `set` commands persist a
+  local user message containing the goal text with goal-setting metadata, so the
+  message footer can show "Set as goal" without exposing `/goal ...`.
 - The service dispatches returned goal state into Redux and still accepts stream
   goal updates as authoritative follow-up state.
 
@@ -64,8 +70,18 @@ Runtime adapter:
   mapping, or local session id.
 - Calls OpenClaw gateway `sessions.goal`.
 - Emits/persists the returned goal state.
+- When a new Cowork turn starts from `/goal start|create|set ...`, creates the
+  OpenClaw goal after session patch/model sync and before `chat.send`, then
+  sends only the objective text to the model, so later pause/resume/clear
+  actions target a real persisted goal.
 - For `start`, `create`, `set`, and `resume`, starts a normal continuation turn
   only when no turn is currently active.
+- If `start`, `create`, `set`, or `resume` is called while a turn is already
+  active, OpenClaw updates the persisted goal immediately and LobsterAI queues
+  one continuation for the updated goal after the active turn completes. This
+  avoids interrupting in-flight tools while ensuring the next model turn sees
+  the new goal. Pause, block, complete, and clear commands remove any queued
+  goal continuation.
 
 OpenClaw patch:
 
