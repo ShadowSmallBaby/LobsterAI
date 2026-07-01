@@ -5,6 +5,11 @@ import { useDispatch, useSelector } from 'react-redux';
 import { mcpCategories,mcpRegistry } from '../../data/mcpRegistry';
 import { i18nService } from '../../services/i18n';
 import { mcpService } from '../../services/mcp';
+import {
+  buildInstalledMcpItems,
+  McpInstalledItem,
+  mergeMarketplaceRegistry,
+} from '../../services/mcpRegistryPresentation';
 import { RootState } from '../../store';
 import { setMcpServers } from '../../store/slices/mcpSlice';
 import { McpMarketplaceCategoryInfo,McpRegistryEntry, McpServerConfig, McpServerFormData } from '../../types/mcp';
@@ -37,6 +42,22 @@ const LAUNCH_STATUS_COLORS: Record<string, string> = {
 };
 
 type McpTab = 'installed' | 'marketplace' | 'custom';
+
+const isQichachaRegistryEntry = (entry: McpRegistryEntry): boolean =>
+  entry.oauthProvider === 'qichacha';
+
+type RegistryGroupItem = Extract<McpInstalledItem, { kind: 'registryGroup' }>;
+
+type DeleteTarget =
+  | { kind: 'server'; id: string; name: string; server: McpServerConfig }
+  | {
+    kind: 'registryGroup';
+    id: string;
+    name: string;
+    registryId: string;
+    servers: McpServerConfig[];
+    registryEntry?: McpRegistryEntry;
+  };
 
 /**
  * Text with line-clamp-2 that shows a popover above the text when truncated.
@@ -91,13 +112,16 @@ const McpManager: React.FC = () => {
   const [activeTab, setActiveTab] = useState<McpTab>('installed');
   const [searchQuery, setSearchQuery] = useState('');
   const [actionError, setActionError] = useState('');
-  const [pendingDelete, setPendingDelete] = useState<McpServerConfig | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
   const [installingRegistry, setInstallingRegistry] = useState<McpRegistryEntry | null>(null);
+  const [connectingRegistryId, setConnectingRegistryId] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState('all');
-  const [dynamicRegistry, setDynamicRegistry] = useState<McpRegistryEntry[]>(mcpRegistry);
+  const [dynamicRegistry, setDynamicRegistry] = useState<McpRegistryEntry[]>(() =>
+    mergeMarketplaceRegistry(mcpRegistry, mcpRegistry),
+  );
   const [dynamicCategories, setDynamicCategories] = useState<ReadonlyArray<{ id: string; key: string; name_zh?: string; name_en?: string }>>(mcpCategories);
   const currentLanguage = i18nService.getLanguage();
 
@@ -124,7 +148,7 @@ const McpManager: React.FC = () => {
     const fetchMarketplace = async () => {
       const result = await mcpService.fetchMarketplace();
       if (!isActive || !result) return;
-      setDynamicRegistry(result.registry);
+      setDynamicRegistry(mergeMarketplaceRegistry(result.registry, mcpRegistry));
       const cats: Array<{ id: string; key: string; name_zh?: string; name_en?: string }> = [
         { id: 'all', key: 'mcpCategoryAll' },
         ...result.categories
@@ -218,14 +242,62 @@ const McpManager: React.FC = () => {
     return getTransportSummary(server);
   }, [getRegistryEntryDescription, getRegistryEntryForServer]);
 
+  const installedItems = useMemo(
+    () => buildInstalledMcpItems(servers, dynamicRegistry),
+    [dynamicRegistry, servers],
+  );
+
+  const getRegistryGroupName = useCallback((item: RegistryGroupItem): string => {
+    return item.registryEntry?.name || item.registryId;
+  }, []);
+
+  const getRegistryGroupDescription = useCallback((item: RegistryGroupItem): string => {
+    if (item.registryEntry) {
+      const description = getRegistryEntryDescription(item.registryEntry).trim();
+      if (description) return description;
+    }
+    return item.servers.map(server => server.description).filter(Boolean).join(' / ');
+  }, [getRegistryEntryDescription]);
+
+  const getRegistryGroupTransportType = (item: RegistryGroupItem): string | null => {
+    const transportTypes = new Set(item.servers.map(server => server.transportType));
+    if (transportTypes.size !== 1) return null;
+    return transportTypes.values().next().value ?? null;
+  };
+
+  const getRegistryGroupSummary = (item: RegistryGroupItem): string => {
+    const registryCommand = item.registryEntry?.command?.trim();
+    if (registryCommand) {
+      return item.registryEntry?.transportType === 'stdio'
+        ? getStdioCommandSummary(registryCommand, item.registryEntry.defaultArgs)
+        : registryCommand;
+    }
+    const summaries = new Set(item.servers.map(getTransportSummary).filter(Boolean));
+    return summaries.size === 1 ? summaries.values().next().value ?? '' : '';
+  };
+
   const filteredInstalled = useMemo(() => {
     const query = searchQuery.trim().replace(/\s+/g, ' ').toLowerCase();
-    if (!query) return servers;
-    return servers.filter(server =>
-      server.name.toLowerCase().includes(query)
-      || getInstalledDescription(server).toLowerCase().includes(query)
-    );
-  }, [servers, searchQuery, getInstalledDescription]);
+    if (!query) return installedItems;
+    return installedItems.filter(item => {
+      if (item.kind === 'server') {
+        return item.server.name.toLowerCase().includes(query)
+          || getInstalledDescription(item.server).toLowerCase().includes(query);
+      }
+      return getRegistryGroupName(item).toLowerCase().includes(query)
+        || getRegistryGroupDescription(item).toLowerCase().includes(query)
+        || item.servers.some(server =>
+          server.name.toLowerCase().includes(query)
+          || getInstalledDescription(server).toLowerCase().includes(query),
+        );
+    });
+  }, [
+    getInstalledDescription,
+    getRegistryGroupDescription,
+    getRegistryGroupName,
+    installedItems,
+    searchQuery,
+  ]);
 
   const filteredCustom = useMemo(() => {
     const custom = servers.filter(s => !s.isBuiltIn);
@@ -359,7 +431,31 @@ const McpManager: React.FC = () => {
       activeTab,
       ...getServerAnalyticsParams(server, getRegistryEntryForServer(server)),
     });
-    setPendingDelete(server);
+    setPendingDelete({ kind: 'server', id: server.id, name: server.name, server });
+  };
+
+  const handleRequestDeleteRegistry = (
+    registryId: string,
+    name: string,
+    registryServers: McpServerConfig[],
+    registryEntry?: McpRegistryEntry,
+  ) => {
+    setActionError('');
+    reportMcpAction('delete_confirm_open', {
+      source: 'mcp_manager',
+      activeTab,
+      ...(registryEntry
+        ? getRegistryAnalyticsParams(registryEntry)
+        : { registryId, mcpName: name }),
+    });
+    setPendingDelete({
+      kind: 'registryGroup',
+      id: registryId,
+      name,
+      registryId,
+      servers: registryServers,
+      registryEntry,
+    });
   };
 
   const handleCancelDelete = () => {
@@ -368,7 +464,11 @@ const McpManager: React.FC = () => {
       reportMcpAction('delete_confirm_cancel', {
         source: 'mcp_manager',
         activeTab,
-        ...getServerAnalyticsParams(pendingDelete, getRegistryEntryForServer(pendingDelete)),
+        ...(pendingDelete.kind === 'server'
+          ? getServerAnalyticsParams(pendingDelete.server, getRegistryEntryForServer(pendingDelete.server))
+          : pendingDelete.registryEntry
+            ? getRegistryAnalyticsParams(pendingDelete.registryEntry)
+            : { registryId: pendingDelete.registryId, mcpName: pendingDelete.name }),
       });
     }
     setPendingDelete(null);
@@ -378,7 +478,9 @@ const McpManager: React.FC = () => {
     if (!pendingDelete || isDeleting) return;
     setIsDeleting(true);
     setActionError('');
-    const result = await mcpService.deleteServer(pendingDelete.id);
+    const result = pendingDelete.kind === 'server'
+      ? await mcpService.deleteServer(pendingDelete.id)
+      : await mcpService.deleteByRegistryId(pendingDelete.registryId);
     if (!result.success) {
       setActionError(result.error || i18nService.t('mcpDeleteFailed'));
       setIsDeleting(false);
@@ -387,7 +489,11 @@ const McpManager: React.FC = () => {
         activeTab,
         result: 'failed',
         errorCode: 'delete_failed',
-        ...getServerAnalyticsParams(pendingDelete, getRegistryEntryForServer(pendingDelete)),
+        ...(pendingDelete.kind === 'server'
+          ? getServerAnalyticsParams(pendingDelete.server, getRegistryEntryForServer(pendingDelete.server))
+          : pendingDelete.registryEntry
+            ? getRegistryAnalyticsParams(pendingDelete.registryEntry)
+            : { registryId: pendingDelete.registryId, mcpName: pendingDelete.name }),
       });
       return;
     }
@@ -398,10 +504,56 @@ const McpManager: React.FC = () => {
       source: 'mcp_manager',
       activeTab,
       result: 'success',
-      ...getServerAnalyticsParams(pendingDelete, getRegistryEntryForServer(pendingDelete)),
+      ...(pendingDelete.kind === 'server'
+        ? getServerAnalyticsParams(pendingDelete.server, getRegistryEntryForServer(pendingDelete.server))
+        : pendingDelete.registryEntry
+          ? getRegistryAnalyticsParams(pendingDelete.registryEntry)
+          : { registryId: pendingDelete.registryId, mcpName: pendingDelete.name }),
     });
     setIsDeleting(false);
     setPendingDelete(null);
+  };
+
+  const handleToggleRegistryEnabled = async (
+    registryId: string,
+    registryServers: McpServerConfig[],
+    registryEntry?: McpRegistryEntry,
+  ) => {
+    const targetEnabled = !registryServers.some(server => server.enabled);
+    reportMcpAction('toggle_enabled', {
+      source: 'mcp_manager',
+      activeTab,
+      targetEnabled,
+      ...(registryEntry
+        ? getRegistryAnalyticsParams(registryEntry)
+        : { registryId, mcpName: registryId }),
+    });
+    try {
+      const updatedServers = await mcpService.setRegistryEnabled(registryId, targetEnabled);
+      dispatch(setMcpServers(updatedServers));
+      setActionError('');
+      reportMcpAction('toggle_enabled_success', {
+        source: 'mcp_manager',
+        activeTab,
+        targetEnabled,
+        result: 'success',
+        ...(registryEntry
+          ? getRegistryAnalyticsParams(registryEntry)
+          : { registryId, mcpName: registryId }),
+      });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : i18nService.t('mcpUpdateFailed'));
+      reportMcpAction('toggle_enabled_failed', {
+        source: 'mcp_manager',
+        activeTab,
+        targetEnabled,
+        result: 'failed',
+        errorCode: 'toggle_failed',
+        ...(registryEntry
+          ? getRegistryAnalyticsParams(registryEntry)
+          : { registryId, mcpName: registryId }),
+      });
+    }
   };
 
   const handleOpenEditForm = (server: McpServerConfig) => {
@@ -422,6 +574,39 @@ const McpManager: React.FC = () => {
       activeCategory,
       ...getRegistryAnalyticsParams(entry),
     });
+    if (isQichachaRegistryEntry(entry)) {
+      setActionError('');
+      setConnectingRegistryId(entry.id);
+      mcpService.connectQichacha().then(result => {
+        if (!result.success) {
+          setActionError(result.error || i18nService.t('mcpQichachaConnectFailed'));
+          reportMcpAction('qichacha_connect_failed', {
+            source: 'mcp_manager',
+            activeTab,
+            activeCategory,
+            result: 'failed',
+            errorCode: 'qichacha_connect_failed',
+            ...getRegistryAnalyticsParams(entry),
+          });
+          return;
+        }
+        if (result.servers) {
+          dispatch(setMcpServers(result.servers));
+        }
+        reportMcpAction('qichacha_connect_success', {
+          source: 'mcp_manager',
+          activeTab,
+          activeCategory,
+          result: 'success',
+          ...getRegistryAnalyticsParams(entry),
+        });
+      }).catch(error => {
+        setActionError(error instanceof Error ? error.message : i18nService.t('mcpQichachaConnectFailed'));
+      }).finally(() => {
+        setConnectingRegistryId(null);
+      });
+      return;
+    }
     setEditingServer(null);
     setInstallingRegistry(entry);
     setIsFormOpen(true);
@@ -611,9 +796,9 @@ const McpManager: React.FC = () => {
             className={tabClass('installed')}
           >
             {i18nService.t('mcpInstalled')}
-            {servers.length > 0 && (
+            {installedItems.length > 0 && (
               <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-surface-raised">
-                {servers.length}
+                {installedItems.length}
               </span>
             )}
             <div className={tabIndicatorClass('installed')} />
@@ -699,7 +884,82 @@ const McpManager: React.FC = () => {
               {i18nService.t('mcpNoInstalledServers')}
             </div>
           ) : (
-            filteredInstalled.map((server) => {
+            filteredInstalled.map((item) => {
+              if (item.kind === 'registryGroup') {
+                const groupName = getRegistryGroupName(item);
+                const groupDescription = getRegistryGroupDescription(item);
+                const groupTransportType = getRegistryGroupTransportType(item);
+                const groupSummary = getRegistryGroupSummary(item);
+                const groupEnabled = item.servers.some(server => server.enabled);
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-7 h-7 rounded-lg bg-surface flex items-center justify-center flex-shrink-0">
+                          <ConnectorIcon className="h-4 w-4 text-secondary" />
+                        </div>
+                        <span className="text-sm font-medium text-foreground truncate">
+                          {groupName}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleRequestDeleteRegistry(
+                            item.registryId,
+                            groupName,
+                            item.servers,
+                            item.registryEntry,
+                          )}
+                          className="p-1 rounded-lg text-secondary hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                          title={i18nService.t('mcpUninstall')}
+                        >
+                          <TrashIcon className="h-3.5 w-3.5" />
+                        </button>
+                        <div
+                          className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
+                            groupEnabled ? 'bg-primary' : 'bg-gray-400 dark:bg-gray-600'
+                          }`}
+                          onClick={() => handleToggleRegistryEnabled(
+                            item.registryId,
+                            item.servers,
+                            item.registryEntry,
+                          )}
+                        >
+                          <div
+                            className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
+                              groupEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                            }`}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <ClampedText text={groupDescription} className="text-xs text-secondary mb-2" />
+
+                    <div className="flex items-center gap-2 text-[10px] text-secondary min-w-0">
+                      {groupTransportType && (
+                        <span className={`shrink-0 px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[groupTransportType] || ''}`}>
+                          {groupTransportType}
+                        </span>
+                      )}
+                      <span className="shrink-0 px-1.5 py-0.5 rounded bg-surface-raised">
+                        {i18nService.t('mcpServersCount').replace('{count}', String(item.servers.length))}
+                      </span>
+                      {groupSummary && (
+                        <>
+                          <span className="shrink-0">·</span>
+                          <span className="truncate min-w-0">{groupSummary}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+              const server = item.server;
               const registryEntry = getRegistryEntryForServer(server);
               const installedDescription = getInstalledDescription(server);
               const launchStatusLabel = getLaunchStatusLabel(server);
@@ -826,8 +1086,21 @@ const McpManager: React.FC = () => {
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       {installedRegistryIds.has(entry.id) ? (
                         <span className="px-2.5 py-1 text-xs rounded-lg bg-surface text-secondary">
-                          {i18nService.t('mcpInstalled')}
+                          {isQichachaRegistryEntry(entry)
+                            ? i18nService.t('mcpAuthorized')
+                            : i18nService.t('mcpInstalled')}
                         </span>
+                      ) : isQichachaRegistryEntry(entry) ? (
+                        <button
+                          type="button"
+                          onClick={() => handleInstallFromRegistry(entry)}
+                          disabled={connectingRegistryId === entry.id}
+                          className="px-2.5 py-1 text-xs rounded-lg bg-primary text-white hover:bg-primary-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {connectingRegistryId === entry.id
+                            ? i18nService.t('mcpQichachaConnecting')
+                            : i18nService.t('mcpQichachaConnect')}
+                        </button>
                       ) : (
                         <button
                           type="button"
@@ -973,10 +1246,14 @@ const McpManager: React.FC = () => {
       {pendingDelete && (
         <Modal onClose={handleCancelDelete} overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60" className="w-full max-w-sm mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-5">
             <div className="text-lg font-semibold text-foreground">
-              {i18nService.t('deleteMcpServer')}
+              {pendingDelete.kind === 'registryGroup'
+                ? i18nService.t('mcpUninstall')
+                : i18nService.t('deleteMcpServer')}
             </div>
             <p className="mt-2 text-sm text-secondary">
-              {i18nService.t('mcpDeleteConfirm').replace('{name}', pendingDelete.name)}
+              {(pendingDelete.kind === 'registryGroup'
+                ? i18nService.t('mcpRegistryDeleteConfirm')
+                : i18nService.t('mcpDeleteConfirm')).replace('{name}', pendingDelete.name)}
             </p>
             {actionError && (
               <div className="mt-3 text-xs text-red-500">

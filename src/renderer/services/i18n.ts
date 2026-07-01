@@ -1676,16 +1676,24 @@ const translations: Record<LanguageType, Record<string, string>> = {
     saveMcpServer: '保存',
     // MCP 市场 & 注册表
     mcpInstalled: '已安装',
+    mcpAuthorized: '已授权',
     mcpMarketplace: '市场',
     mcpCustom: '自定义',
     mcpCustomDescription: '手动配置 MCP 服务器',
     mcpResetForm: '重置',
     mcpInstall: '安装',
+    mcpUninstall: '卸载',
+    mcpRegistryDeleteConfirm: '确定卸载"{name}"并删除其所有 MCP 服务吗？',
+    mcpServersCount: '{count} 个服务',
     mcpInstallFromUrl: '通过 URL 安装',
     mcpInstallFromUrlTitle: '通过 URL 安装 MCP',
     mcpInstallFromUrlPlaceholder: '输入 npm 包名或 URL',
     mcpInstallFromUrlHint:
       '支持 npm 包名（如 @modelcontextprotocol/server-filesystem）、npx 命令或 HTTP/HTTPS URL',
+    mcpQichachaConnect: '登录授权',
+    mcpQichachaReconnect: '重新授权',
+    mcpQichachaConnecting: '授权中...',
+    mcpQichachaConnectFailed: '企查查 MCP 授权失败',
     mcpRequiredConfig: '必填配置',
     mcpEnvRequired: '此字段为必填项',
     mcpOptionalConfig: '可选配置',
@@ -1712,6 +1720,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     mcpDesc_canva: 'Canva 设计平台：创建和管理设计、模板操作',
     mcpDesc_firecrawl: '网页抓取与数据提取：支持批处理、结构化提取和内容分析',
     mcpDesc_fetch: '网页内容抓取和 HTML 转 Markdown，适合 LLM 消费',
+    mcpDesc_qichacha: '通过企查查账号授权，自动配置企业工商、风险、知识产权、经营、人员和历史存档 MCP 服务',
 
     // 邮箱技能配置
     emailTab: '邮箱',
@@ -4372,16 +4381,24 @@ const translations: Record<LanguageType, Record<string, string>> = {
     saveMcpServer: 'Save',
     // MCP Marketplace & Registry
     mcpInstalled: 'Installed',
+    mcpAuthorized: 'Authorized',
     mcpMarketplace: 'Marketplace',
     mcpCustom: 'Custom',
     mcpCustomDescription: 'Manually configure an MCP server',
     mcpResetForm: 'Reset',
     mcpInstall: 'Install',
+    mcpUninstall: 'Uninstall',
+    mcpRegistryDeleteConfirm: 'Uninstall "{name}" and delete all of its MCP servers?',
+    mcpServersCount: '{count} servers',
     mcpInstallFromUrl: 'Install from URL',
     mcpInstallFromUrlTitle: 'Install MCP from URL',
     mcpInstallFromUrlPlaceholder: 'Enter npm package name or URL',
     mcpInstallFromUrlHint:
       'Supports npm package names (e.g. @modelcontextprotocol/server-filesystem), npx commands, or HTTP/HTTPS URLs',
+    mcpQichachaConnect: 'Sign in',
+    mcpQichachaReconnect: 'Reconnect',
+    mcpQichachaConnecting: 'Connecting...',
+    mcpQichachaConnectFailed: 'Failed to authorize Qichacha MCP',
     mcpRequiredConfig: 'Required Configuration',
     mcpEnvRequired: 'This field is required',
     mcpOptionalConfig: 'Optional Configuration',
@@ -4410,6 +4427,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     mcpDesc_firecrawl:
       'Web scraping and data extraction: batch processing, structured extraction and content analysis',
     mcpDesc_fetch: 'Web content fetching and HTML-to-markdown conversion for LLM consumption',
+    mcpDesc_qichacha:
+      'Authorize with a Qichacha account to configure company, risk, IP, operation, executive and history MCP servers automatically',
 
     // Email Skill Config
     emailTab: 'Email',
