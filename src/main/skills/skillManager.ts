@@ -6,15 +6,16 @@ import fs from 'fs';
 import yaml from 'js-yaml';
 import path from 'path';
 
-import { ComputerUseSkillId } from '../shared/computerUse/constants';
-import { isComputerUseKitInstalled } from './computerUse/computerUseKit';
-import { cpRecursiveSync } from './fsCompat';
-import { t } from './i18n';
-import { getElectronNodeRuntimePath } from './libs/coworkUtil';
-import { appendPythonRuntimeToEnv } from './libs/pythonRuntime';
-import { mergeReports,scanMultipleSkillDirs } from './libs/skillSecurity/skillSecurityScanner';
-import type { SecurityReportAction,SkillSecurityReport } from './libs/skillSecurity/skillSecurityTypes';
-import { SqliteStore } from './sqliteStore';
+import { ComputerUseSkillId } from '../../shared/computerUse/constants';
+import { isComputerUseKitInstalled } from '../computerUse/computerUseKit';
+import { cpRecursiveSync } from '../fsCompat';
+import { t } from '../i18n';
+import { getElectronNodeRuntimePath } from '../libs/coworkUtil';
+import { resolveNodeRuntimeForSpawn } from '../libs/nodeRuntime';
+import { appendPythonRuntimeToEnv } from '../libs/pythonRuntime';
+import { mergeReports,scanMultipleSkillDirs } from '../libs/skillSecurity/skillSecurityScanner';
+import type { SecurityReportAction,SkillSecurityReport } from '../libs/skillSecurity/skillSecurityTypes';
+import { SqliteStore } from '../sqliteStore';
 
 /**
  * Resolve the user's login shell PATH on macOS/Linux.
@@ -625,6 +626,21 @@ type SkillScriptRunResult = {
   error?: string;
   spawnErrorCode?: string;
 };
+
+type SkillScriptRuntimeCandidate = {
+  command: string;
+  args: string[];
+  extraEnv?: NodeJS.ProcessEnv;
+};
+
+function getSkillScriptRuntimeCandidates(env: NodeJS.ProcessEnv): SkillScriptRuntimeCandidate[] {
+  const runtime = resolveNodeRuntimeForSpawn(env);
+  return [{
+    command: runtime.command,
+    args: runtime.args,
+    extraEnv: Object.keys(runtime.env).length > 0 ? runtime.env : undefined,
+  }];
+}
 
 const runScriptWithTimeout = (options: {
   command: string;
@@ -2840,16 +2856,8 @@ export class SkillManager {
     return path.dirname(skill.skillPath);
   }
 
-  private getScriptRuntimeCandidates(env: NodeJS.ProcessEnv): Array<{ command: string; extraEnv?: NodeJS.ProcessEnv }> {
-    const candidates: Array<{ command: string; extraEnv?: NodeJS.ProcessEnv }> = [];
-    if (hasCommand('node', env)) {
-      candidates.push({ command: 'node' });
-    }
-    candidates.push({
-      command: getElectronNodeRuntimePath(),
-      extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
-    });
-    return candidates;
+  private getScriptRuntimeCandidates(env: NodeJS.ProcessEnv): SkillScriptRuntimeCandidate[] {
+    return getSkillScriptRuntimeCandidates(env);
   }
 
   private async runSkillScriptWithEnv(
@@ -2872,7 +2880,7 @@ export class SkillManager {
       };
       const result = await runScriptWithTimeout({
         command: runtime.command,
-        args: [scriptPath, ...scriptArgs],
+        args: [...runtime.args, scriptPath, ...scriptArgs],
         cwd: skillDir,
         env,
         timeoutMs,
@@ -2980,4 +2988,5 @@ export const __skillManagerTestUtils = {
   extractDescription,
   parseClawhubUrl,
   isWindowsDeletePermissionError,
+  getSkillScriptRuntimeCandidates,
 };

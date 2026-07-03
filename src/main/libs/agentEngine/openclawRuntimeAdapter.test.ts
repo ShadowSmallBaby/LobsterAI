@@ -99,6 +99,39 @@ test('plan mode rejects a preface and accepts a structured implementation plan',
   expect(isPlanModeResponseComplete(completePlan)).toBe(true);
 });
 
+test('plan mode treats OpenClaw failure finals as system errors instead of proposed plans', async () => {
+  const { session, store } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: 'plan a web game', timestamp: 1, metadata: {} },
+  ]);
+  session.status = 'running';
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.on('error', vi.fn());
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const turn = createActiveTurn(session.id, sessionKey, 'run-lock-final');
+  turn.planMode = true;
+  adapter.activeTurns.set(session.id, turn);
+
+  await adapter.handleChatFinal(session.id, turn, {
+    state: 'final',
+    runId: 'run-lock-final',
+    sessionKey,
+    message: {
+      role: 'assistant',
+      content: [{
+        type: 'text',
+        text: '⚠️ Agent failed before reply: session file locked (timeout 60000ms): pid=47378 alive=true',
+      }],
+    },
+  });
+
+  expect(session.status).toBe('error');
+  expect(session.messages.some((message) => message.type === 'assistant')).toBe(false);
+  const systemMessage = session.messages.find((message) => message.type === 'system');
+  expect(systemMessage?.content).toContain('session file locked');
+  expect(systemMessage?.content).not.toContain('<proposed_plan>');
+  expect(adapter.activeTurns.has(session.id)).toBe(false);
+});
+
 test('assistant snapshot jitter does not count as a stream reset', () => {
   expect(isSignificantAssistantStreamReset(545, 544)).toBe(false);
   expect(isSignificantAssistantStreamReset(1000, 930)).toBe(false);
@@ -1321,6 +1354,208 @@ test('patchSession keeps managed-key fallback for normal Cowork sessions', async
   });
 });
 
+test('pollChannelSessions syncs channel row model into the local session override', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async (method: string) => {
+      if (method === 'sessions.list') {
+        return {
+          sessions: [{
+            key: sessionKey,
+            modelProvider: 'lobsterai-server',
+            model: 'kimi-k2.6-YoudaoInner',
+          }],
+        };
+      }
+      return { messages: [] };
+    },
+  };
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.knownChannelSessionIds.add(session.id);
+  adapter.fullySyncedSessions.add(session.id);
+  adapter.sessionIdBySessionKey.set(sessionKey, session.id);
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-active'));
+
+  await adapter.pollChannelSessions();
+
+  expect(session.modelOverride).toBe('lobsterai-server/kimi-k2.6-YoudaoInner');
+  expect(getUpdateSessionCalls()).toEqual([
+    {
+      sessionId: session.id,
+      patch: { modelOverride: 'lobsterai-server/kimi-k2.6-YoudaoInner' },
+      options: { touchUpdatedAt: false },
+    },
+  ]);
+});
+
+test('pollChannelSessions clears stale override when channel row matches the agent default model', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const defaultModel = 'lobsterai-server/deepseek-v4-flash-YoudaoInner';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    agentModel: defaultModel,
+    sessionId: 'session-1',
+  });
+  session.modelOverride = 'lobsterai-server/qwen3.7-max-YoudaoInner';
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      sessions: [{
+        key: sessionKey,
+        modelProvider: 'lobsterai-server',
+        model: 'deepseek-v4-flash-YoudaoInner',
+      }],
+    }),
+  };
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.knownChannelSessionIds.add(session.id);
+  adapter.fullySyncedSessions.add(session.id);
+  adapter.sessionIdBySessionKey.set(sessionKey, session.id);
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-active'));
+
+  await adapter.pollChannelSessions();
+
+  expect(session.modelOverride).toBe('');
+  expect(getUpdateSessionCalls()).toEqual([
+    {
+      sessionId: session.id,
+      patch: { modelOverride: '' },
+      options: { touchUpdatedAt: false },
+    },
+  ]);
+});
+
+test('pollChannelSessions marks a channel session running when sessions.list reports an active run', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  session.status = 'completed';
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const statusEvents: Array<{ sessionId: string; status: string }> = [];
+  adapter.on('sessionStatus', (sessionId: string, status: string) => {
+    statusEvents.push({ sessionId, status });
+  });
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      sessions: [{
+        key: sessionKey,
+        hasActiveRun: true,
+      }],
+    }),
+  };
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.knownChannelSessionIds.add(session.id);
+
+  await adapter.pollChannelSessions();
+
+  expect(session.status).toBe('running');
+  expect(getUpdateSessionCalls()).toContainEqual({
+    sessionId: session.id,
+    patch: { status: 'running' },
+    options: undefined,
+  });
+  expect(statusEvents).toEqual([{ sessionId: session.id, status: 'running' }]);
+});
+
+test('pollChannelSessions completes a running channel session when the active run disappears', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  session.status = 'running';
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const statusEvents: Array<{ sessionId: string; status: string }> = [];
+  adapter.on('sessionStatus', (sessionId: string, status: string) => {
+    statusEvents.push({ sessionId, status });
+  });
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      sessions: [{
+        key: sessionKey,
+        hasActiveRun: false,
+      }],
+    }),
+  };
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.knownChannelSessionIds.add(session.id);
+
+  await adapter.pollChannelSessions();
+
+  expect(session.status).toBe('completed');
+  expect(getUpdateSessionCalls()).toContainEqual({
+    sessionId: session.id,
+    patch: { status: 'completed' },
+    options: undefined,
+  });
+  expect(statusEvents).toEqual([{ sessionId: session.id, status: 'completed' }]);
+});
+
+test('pollChannelSessions does not complete a channel session while a local active turn exists', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  session.status = 'running';
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const statusEvents: Array<{ sessionId: string; status: string }> = [];
+  adapter.on('sessionStatus', (sessionId: string, status: string) => {
+    statusEvents.push({ sessionId, status });
+  });
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      sessions: [{
+        key: sessionKey,
+        hasActiveRun: false,
+      }],
+    }),
+  };
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.knownChannelSessionIds.add(session.id);
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-active'));
+
+  await adapter.pollChannelSessions();
+
+  expect(session.status).toBe('running');
+  expect(getUpdateSessionCalls().some((call) =>
+    Object.prototype.hasOwnProperty.call(call.patch, 'status'),
+  )).toBe(false);
+  expect(statusEvents).toEqual([]);
+});
+
 function createRunTurnAdapter(options: {
   sessionModelOverride?: string;
   agentModel?: string;
@@ -1712,7 +1947,7 @@ test('continueSession aborts silently when the session is stopped during the mod
 
 function createReconcileStore(
   messages: Array<Record<string, unknown>>,
-  options: { sessionId?: string } = {},
+  options: { agentModel?: string; sessionId?: string } = {},
 ) {
   const session = {
     id: options.sessionId ?? 'session-1',
@@ -1732,13 +1967,25 @@ function createReconcileStore(
   let nextId = session.messages.length + 1;
   let replaceCallCount = 0;
   let lastReplaceArgs: { sessionId: string; authoritative: Array<Record<string, unknown>> } | null = null;
+  const updateSessionCalls: Array<{
+    sessionId: string;
+    patch: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }> = [];
 
   return {
     session,
     getReplaceCallCount: () => replaceCallCount,
     getLastReplaceArgs: () => lastReplaceArgs,
+    getUpdateSessionCalls: () => updateSessionCalls,
     store: {
       getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+      getAgent: () => ({
+        id: session.agentId,
+        name: 'Main',
+        source: 'custom',
+        model: options.agentModel ?? '',
+      }),
       addMessage: (sessionId: string, message: Record<string, unknown>) => {
         expect(sessionId).toBe(session.id);
         const created = {
@@ -1750,8 +1997,9 @@ function createReconcileStore(
         session.messages.push(created);
         return created;
       },
-      updateSession: (sessionId: string, patch: Record<string, unknown>) => {
+      updateSession: (sessionId: string, patch: Record<string, unknown>, updateOptions?: Record<string, unknown>) => {
         expect(sessionId).toBe(session.id);
+        updateSessionCalls.push({ sessionId, patch, options: updateOptions });
         Object.assign(session, patch);
       },
       updateMessage: (sessionId: string, messageId: string, patch: Record<string, unknown>) => {
@@ -2178,6 +2426,131 @@ test('reconcileWithHistory: missing assistant message — triggers replace', asy
     { role: 'user', text: 'Hello', timestamp: 1 },
     { role: 'assistant', text: 'Hi there' },
   ]);
+});
+
+test('reconcileWithHistory: syncs session_status model changes into the local session override', async () => {
+  const sessionKey = 'agent:main:openclaw-weixin:bot-1:direct:user-1';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: '切成 kimi2.6', timestamp: 1, metadata: {} },
+  ]);
+  session.modelOverride = 'lobsterai-server/qwen3.7-max-YoudaoInner';
+
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+  };
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      messages: [
+        { role: 'user', content: '切成 kimi2.6' },
+        {
+          role: 'toolResult',
+          toolName: 'session_status',
+          content: 'status',
+          details: {
+            ok: true,
+            changedModel: true,
+            model: 'kimi-k2.6-YoudaoInner',
+            modelProvider: 'lobsterai-server',
+            modelOverride: 'lobsterai-server/kimi-k2.6-YoudaoInner',
+          },
+        },
+        { role: 'assistant', content: '已经切好了', model: 'qwen3.7-max-YoudaoInner' },
+      ],
+    }),
+  };
+
+  await adapter.reconcileWithHistory(session.id, sessionKey);
+
+  expect(session.modelOverride).toBe('lobsterai-server/kimi-k2.6-YoudaoInner');
+  expect(getUpdateSessionCalls()).toContainEqual({
+    sessionId: session.id,
+    patch: { modelOverride: 'lobsterai-server/kimi-k2.6-YoudaoInner' },
+    options: { touchUpdatedAt: false },
+  });
+});
+
+test('reconcileWithHistory: syncs model-snapshot entries without reading assistant text claims', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: '你现在是什么模型', timestamp: 1, metadata: {} },
+  ]);
+  session.modelOverride = 'lobsterai-server/qwen3.7-max-YoudaoInner';
+
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+  };
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      messages: [
+        {
+          type: 'custom',
+          customType: 'model-snapshot',
+          data: {
+            provider: 'lobsterai-server',
+            modelId: 'kimi-k2.6-YoudaoInner',
+          },
+        },
+        { role: 'user', content: '你现在是什么模型' },
+        {
+          role: 'assistant',
+          content: '当前是 Kimi-K2.6',
+          model: 'kimi-k2.6-YoudaoInner',
+        },
+      ],
+    }),
+  };
+
+  await adapter.reconcileWithHistory(session.id, sessionKey);
+
+  expect(session.modelOverride).toBe('lobsterai-server/kimi-k2.6-YoudaoInner');
+  expect(getUpdateSessionCalls()).toContainEqual({
+    sessionId: session.id,
+    patch: { modelOverride: 'lobsterai-server/kimi-k2.6-YoudaoInner' },
+    options: { touchUpdatedAt: false },
+  });
+});
+
+test('reconcileWithHistory: assistant text and message model metadata do not overwrite session override', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: '你现在是什么模型', timestamp: 1, metadata: {} },
+  ]);
+  session.modelOverride = 'lobsterai-server/qwen3.7-max-YoudaoInner';
+
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+  };
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      messages: [
+        { role: 'user', content: '你现在是什么模型' },
+        {
+          role: 'assistant',
+          content: '当前是 Kimi-K2.6',
+          model: 'kimi-k2.6-YoudaoInner',
+        },
+      ],
+    }),
+  };
+
+  await adapter.reconcileWithHistory(session.id, sessionKey);
+
+  expect(session.modelOverride).toBe('lobsterai-server/qwen3.7-max-YoudaoInner');
+  expect(
+    getUpdateSessionCalls().some((call) =>
+      Object.prototype.hasOwnProperty.call(call.patch, 'modelOverride'),
+    ),
+  ).toBe(false);
+  expect(session.messages.some((message) => message.metadata?.model === 'kimi-k2.6-YoudaoInner')).toBe(true);
 });
 
 test('reconcileWithHistory: carries gateway timestamps into replacement entries', async () => {
@@ -3788,6 +4161,47 @@ test('compaction stream shows context maintenance state while keeping the sessio
   expect(adapter.activeTurns.has(session.id)).toBe(true);
 });
 
+test('chat error clears context maintenance after compaction starts', () => {
+  const { session, store } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
+  ]);
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const maintenanceSpy = vi.fn();
+  const errorSpy = vi.fn();
+
+  session.status = 'running';
+  adapter.on('contextMaintenance', maintenanceSpy);
+  adapter.on('error', errorSpy);
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-compaction-error'));
+
+  adapter.handleAgentEvent({
+    runId: 'run-compaction-error',
+    sessionKey,
+    stream: 'compaction',
+    data: { phase: 'start' },
+  }, 1);
+
+  adapter.handleChatEvent({
+    state: 'error',
+    runId: 'run-compaction-error',
+    sessionKey,
+    errorMessage: 'LLM request failed.',
+    providerRuntimeFailureKind: 'timeout',
+    rawErrorPreview: 'LLM idle timeout (120s): no response from model',
+  }, 2);
+
+  expect(maintenanceSpy).toHaveBeenNthCalledWith(1, session.id, true);
+  expect(maintenanceSpy).toHaveBeenNthCalledWith(2, session.id, false);
+  expect(session.status).toBe('error');
+  expect(adapter.activeTurns.has(session.id)).toBe(false);
+  expect(errorSpy).toHaveBeenCalledWith(session.id, expect.stringContaining('网络连接失败'));
+  expect(session.messages.some((message) => (
+    message.type === 'system'
+    && message.content.includes('网络连接失败')
+  ))).toBe(true);
+});
+
 test('compaction stream reuses active structured message for duplicate start events', () => {
   const { session, store } = createReconcileStore([
     { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
@@ -4804,93 +5218,109 @@ test('ordinary write tool does not trigger memory maintenance handling', async (
   expect(session.messages.find((message) => message.type === 'tool_use')?.metadata?.toolName).toBe('write');
 });
 
-test('blocked plan mode mutation aborts the unsafe run and resumes with a tool-free plan request', async () => {
-  const preface = 'Now let me read the workspace to understand the project structure.';
-  const { session, store } = createReconcileStore([
-    { id: 'msg-1', type: 'user', content: 'plan a bakery website', timestamp: 1, metadata: {} },
-    {
-      id: 'msg-2',
-      type: 'assistant',
-      content: preface,
-      timestamp: 2,
-      metadata: { isStreaming: true, isFinal: false },
-    },
-  ]);
-  session.status = 'running';
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
-  const sessionKey = `agent:main:lobsterai:${session.id}`;
-  const turn = createActiveTurn(session.id, sessionKey, 'run-plan-unsafe');
-  turn.planMode = true;
-  turn.assistantMessageId = 'msg-2';
-  turn.currentText = preface;
-  turn.currentAssistantSegmentText = preface;
-  turn.agentAssistantTextLength = preface.length;
+test('blocked plan mode mutation waits for lifecycle end before safety recovery', async () => {
+  vi.useFakeTimers();
+  try {
+    const preface = 'Now let me read the workspace to understand the project structure.';
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'plan a bakery website', timestamp: 1, metadata: {} },
+      {
+        id: 'msg-2',
+        type: 'assistant',
+        content: preface,
+        timestamp: 2,
+        metadata: { isStreaming: true, isFinal: false },
+      },
+    ]);
+    session.status = 'running';
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    const turn = createActiveTurn(session.id, sessionKey, 'run-plan-unsafe');
+    turn.planMode = true;
+    turn.assistantMessageId = 'msg-2';
+    turn.currentText = preface;
+    turn.currentAssistantSegmentText = preface;
+    turn.agentAssistantTextLength = preface.length;
 
-  adapter.gatewayClient = {
-    start: () => {},
-    stop: () => {},
-    request: async (method: string, params?: unknown) => {
-      requests.push({ method, params: params as Record<string, unknown> });
-      return method === 'chat.send' ? { runId: 'run-plan-safe-recovery' } : {};
-    },
-  };
-  adapter.activeTurns.set(session.id, turn);
-  adapter.sessionIdByRunId.set('run-plan-unsafe', session.id);
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async (method: string, params?: unknown) => {
+        requests.push({ method, params: params as Record<string, unknown> });
+        return method === 'chat.send' ? { runId: 'run-plan-safe-recovery' } : {};
+      },
+    };
+    adapter.activeTurns.set(session.id, turn);
+    adapter.sessionIdByRunId.set('run-plan-unsafe', session.id);
 
-  adapter.handleAgentEvent({
-    runId: 'run-plan-unsafe',
-    sessionKey,
-    stream: 'tool',
-    data: {
-      toolCallId: 'call-mkdir',
-      phase: 'start',
-      name: 'exec',
-      args: { command: 'mkdir -p /tmp/mcbakery' },
-    },
-  }, 1);
-  await Promise.resolve();
+    adapter.handleAgentEvent({
+      runId: 'run-plan-unsafe',
+      sessionKey,
+      stream: 'tool',
+      data: {
+        toolCallId: 'call-mkdir',
+        phase: 'start',
+        name: 'exec',
+        args: { command: 'mkdir -p /tmp/mcbakery' },
+      },
+    }, 1);
+    await Promise.resolve();
 
-  expect(requests.find((request) => request.method === 'chat.abort')?.params).toEqual({
-    sessionKey,
-    runId: 'run-plan-unsafe',
-  });
-  expect(turn.planModeSafetyRecoveryPending).toBe(true);
-  expect(turn.planModeRecoveryAttempted).toBe(true);
-  expect(session.status).toBe('running');
-  expect(session.messages.some((message) => message.type === 'system')).toBe(false);
+    expect(requests.find((request) => request.method === 'chat.abort')?.params).toEqual({
+      sessionKey,
+      runId: 'run-plan-unsafe',
+    });
+    expect(turn.planModeSafetyRecoveryPending).toBe(true);
+    expect(turn.planModeRecoveryAttempted).toBe(true);
+    expect(session.status).toBe('running');
+    expect(session.messages.some((message) => message.type === 'system')).toBe(false);
 
-  adapter.handleChatEvent({
-    state: 'aborted',
-    runId: 'run-plan-unsafe',
-    sessionKey,
-    stopReason: 'abort',
-  }, 2);
-  await Promise.resolve();
-  await Promise.resolve();
+    adapter.handleChatEvent({
+      state: 'aborted',
+      runId: 'run-plan-unsafe',
+      sessionKey,
+      stopReason: 'abort',
+    }, 2);
+    await Promise.resolve();
 
-  const recoveryRequest = requests.find((request) => request.method === 'chat.send');
-  expect(recoveryRequest?.params).toMatchObject({
-    sessionKey,
-    deliver: false,
-    message: expect.stringContaining('Plan Mode safety recovery instruction'),
-  });
-  expect(recoveryRequest?.params.message).toContain('Do not call any tools');
-  expect(turn.planModeSafetyRecoveryPending).toBe(false);
-  expect(turn.knownRunIds.has('run-plan-safe-recovery')).toBe(true);
-  expect(session.status).toBe('running');
-  expect(session.messages.some((message) => message.metadata?.isTimeout)).toBe(false);
+    expect(requests.some((request) => request.method === 'chat.send')).toBe(false);
 
-  const recoveredPlan = '<proposed_plan>\n## Summary\n- Build the bakery page.\n</proposed_plan>';
-  adapter.processAgentAssistantText({
-    runId: 'run-plan-safe-recovery',
-    sessionKey,
-    stream: 'assistant',
-    data: { text: recoveredPlan },
-  });
+    adapter.handleAgentEvent({
+      runId: 'run-plan-unsafe',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'end', aborted: true },
+    }, 3);
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(requests.some((request) => request.method === 'chat.send')).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
 
-  expect(session.messages.find((message) => message.id === 'msg-2')?.content).toBe(recoveredPlan);
-  expect(session.messages.some((message) => message.content === preface)).toBe(false);
+    const recoveryRequest = requests.find((request) => request.method === 'chat.send');
+    expect(recoveryRequest?.params).toMatchObject({
+      sessionKey,
+      deliver: false,
+      message: expect.stringContaining('Plan Mode safety recovery instruction'),
+    });
+    expect(recoveryRequest?.params.message).toContain('Do not call any tools');
+    expect(turn.planModeSafetyRecoveryPending).toBe(false);
+    expect(turn.knownRunIds.has('run-plan-safe-recovery')).toBe(true);
+    expect(session.status).toBe('running');
+    expect(session.messages.some((message) => message.metadata?.isTimeout)).toBe(false);
+
+    const recoveredPlan = '<proposed_plan>\n## Summary\n- Build the bakery page.\n</proposed_plan>';
+    adapter.processAgentAssistantText({
+      runId: 'run-plan-safe-recovery',
+      sessionKey,
+      stream: 'assistant',
+      data: { text: recoveredPlan },
+    });
+
+    expect(session.messages.find((message) => message.id === 'msg-2')?.content).toBe(recoveredPlan);
+    expect(session.messages.some((message) => message.content === preface)).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('repeated blocked mutation in one plan turn stops instead of looping recovery', async () => {

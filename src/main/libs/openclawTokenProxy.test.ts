@@ -61,3 +61,135 @@ test('expires stale remembered quota errors', () => {
 
   expect(consumeRecentOpenClawTokenProxyQuotaError(32_000)).toBeNull();
 });
+
+test('hydrates missing Gemini package model tool call thought signatures', () => {
+  const requestBody = {
+    model: 'gemini-3.5-flash-YoudaoInner',
+    messages: [
+      {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'call_memory',
+            type: 'function',
+            function: {
+              name: 'memory_search',
+              arguments: '{"query":"福利公告"}',
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  expect(testUtils.hydrateGeminiToolCallThoughtSignatures(requestBody)).toBe(true);
+  expect((requestBody.messages[0].tool_calls[0] as Record<string, unknown>).extra_content).toEqual({
+    google: {
+      thought_signature: 'skip_thought_signature_validator',
+    },
+  });
+  expect(requestBody.messages[0].tool_calls[0].function.extra_content).toEqual({
+    google: {
+      thought_signature: 'skip_thought_signature_validator',
+    },
+  });
+  expect(requestBody.messages[0].tool_calls[0].function.thought_signature).toBe(
+    'skip_thought_signature_validator',
+  );
+});
+
+test('mirrors existing Gemini package model tool call thought signatures into function fields', () => {
+  const requestBody = {
+    model: 'gemini-3.5-flash-YoudaoInner',
+    messages: [
+      {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'call_memory',
+            type: 'function',
+            extra_content: {
+              google: {
+                thought_signature: 'existing-signature',
+              },
+            },
+            function: {
+              name: 'memory_search',
+              arguments: '{}',
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  expect(testUtils.hydrateGeminiToolCallThoughtSignatures(requestBody)).toBe(true);
+  expect(requestBody.messages[0].tool_calls[0].extra_content).toEqual({
+    google: {
+      thought_signature: 'existing-signature',
+    },
+  });
+  expect(requestBody.messages[0].tool_calls[0].function.extra_content).toEqual({
+    google: {
+      thought_signature: 'existing-signature',
+    },
+  });
+  expect(requestBody.messages[0].tool_calls[0].function.thought_signature).toBe('existing-signature');
+});
+
+test('keeps fully hydrated Gemini package model tool calls unchanged', () => {
+  const requestBody = {
+    model: 'gemini-3.5-flash-YoudaoInner',
+    messages: [
+      {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'call_memory',
+            type: 'function',
+            extra_content: {
+              google: {
+                thought_signature: 'existing-signature',
+              },
+            },
+            function: {
+              name: 'memory_search',
+              arguments: '{}',
+              extra_content: {
+                google: {
+                  thought_signature: 'existing-signature',
+                },
+              },
+              thought_signature: 'existing-signature',
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  expect(testUtils.hydrateGeminiToolCallThoughtSignatures(requestBody)).toBe(false);
+});
+
+test('leaves non-Gemini package model request bodies unchanged', () => {
+  const requestBody = Buffer.from(JSON.stringify({
+    model: 'qwen3.5-plus-YoudaoInner',
+    messages: [
+      {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'call_memory',
+            type: 'function',
+            function: {
+              name: 'memory_search',
+              arguments: '{}',
+            },
+          },
+        ],
+      },
+    ],
+  }));
+
+  expect(testUtils.hydrateGeminiChatCompletionsBody(requestBody)).toBe(requestBody);
+});

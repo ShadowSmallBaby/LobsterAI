@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { classifyErrorKey } from '../../../common/coworkErrorClassify';
 import { ContextCompactionStatus } from '../../../common/coworkSystemMessages';
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
+import type { CoworkGoal } from '../../../shared/cowork/goal';
 import { dedupeArtifactsForDisplay } from '../../services/artifactParser';
 import { i18nService } from '../../services/i18n';
 import type { Artifact } from '../../types/artifact';
@@ -32,6 +33,7 @@ import {
   hasText,
   isContextCompactionMessage,
   isDuplicateGeneratedVideoAssistantMessage,
+  type ToolGroupItem,
 } from './messageDisplayUtils';
 import ThinkingBlock from './ThinkingBlock';
 import ToolCallGroup from './ToolCallGroup';
@@ -103,7 +105,7 @@ const ContextCompactionDivider: React.FC<{ label: string; active?: boolean }> = 
   >
     <div className="h-px min-w-0 flex-1 bg-border" />
     <div className="flex max-w-[min(100%,360px)] flex-col items-center gap-1.5 bg-background px-2">
-      <div className="inline-flex max-w-full items-center gap-2 text-[14px] font-normal leading-[23px] text-foreground/90">
+      <div className="inline-flex max-w-full items-center gap-2 text-sm font-normal leading-[var(--lobster-leading-promptLarge)] text-foreground/95">
         <ContextCompressionIcon className={`h-3.5 w-3.5 flex-shrink-0 text-foreground/70 ${active ? 'animate-pulse' : ''}`} />
         <span className="truncate">{label}</span>
       </div>
@@ -195,27 +197,33 @@ const AssistantTurnBlock: React.FC<{
   artifacts?: Artifact[];
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
+  localServiceDirectory?: string;
   onOpenLocalService?: (artifact: Artifact) => void;
   onOpenHtmlFile?: (artifact: Artifact) => void;
   onForkMessage?: (messageId: string) => void;
   planConfirmationMessageId?: string | null;
   onConfirmPlan?: (messageId: string) => void;
   onAdjustPlan?: (messageId: string) => void;
+  renderToolGroupFooter?: (group: ToolGroupItem) => React.ReactNode;
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
+  completedGoal?: CoworkGoal | null;
 }> = ({
   turn,
   artifacts,
   resolveLocalFilePath,
   mapDisplayText,
+  localServiceDirectory,
   onOpenLocalService,
   onOpenHtmlFile,
   onForkMessage,
   planConfirmationMessageId,
   onConfirmPlan,
   onAdjustPlan,
+  renderToolGroupFooter,
   showTypingIndicator = false,
   showCopyButtons = true,
+  completedGoal,
 }) => {
   const [artifactCardsExpanded, setArtifactCardsExpanded] = useState(false);
   const visibleAssistantItems = getVisibleAssistantItems(turn.assistantItems);
@@ -228,8 +236,13 @@ const AssistantTurnBlock: React.FC<{
     [artifacts],
   );
   const artifactCards = useMemo(
-    () => artifacts ? dedupeArtifactsForDisplay(artifacts) : [],
-    [artifacts],
+    () => artifacts
+      ? dedupeArtifactsForDisplay(
+          artifacts,
+          { defaultProjectDirectory: localServiceDirectory },
+        )
+      : [],
+    [artifacts, localServiceDirectory],
   );
   const visibleArtifactCards = useMemo(() => {
     return artifactCardsExpanded ? artifactCards : artifactCards.slice(0, 3);
@@ -332,7 +345,7 @@ const AssistantTurnBlock: React.FC<{
             )}
             {(hasToolResultText || showNoDetailError) && (
               <div className="mt-2 px-3 py-2 rounded-lg bg-surface-raised max-h-64 overflow-y-auto">
-                <pre className={`text-xs whitespace-pre-wrap break-words font-mono ${
+                <pre className={`text-code whitespace-pre-wrap break-words font-mono ${
                   isToolError
                     ? 'text-red-500'
                     : hasToolResultText
@@ -403,6 +416,9 @@ const AssistantTurnBlock: React.FC<{
                   .slice(index + 1)
                   .some(laterItem => laterItem.type === 'tool_group' || laterItem.type === 'media_polling_group');
                 const isLastAssistant = showCopyButtons && !hasToolGroupAfter;
+                const hasAssistantAfter = consolidatedItems
+                  .slice(index + 1)
+                  .some(laterItem => laterItem.type === 'assistant');
 
                 return (
                   <AssistantMessageItem
@@ -413,6 +429,7 @@ const AssistantTurnBlock: React.FC<{
                     showCopyButton={isLastAssistant}
                     onFork={isLastAssistant ? onForkMessage : undefined}
                     turnMetadata={isLastAssistant ? (item.message.metadata as CoworkMessageMetadata) : undefined}
+                    completedGoal={isLastAssistant && !hasAssistantAfter ? completedGoal : null}
                     planConfirmationMessageId={planConfirmationMessageId}
                     onConfirmPlan={onConfirmPlan}
                     onAdjustPlan={onAdjustPlan}
@@ -430,6 +447,7 @@ const AssistantTurnBlock: React.FC<{
                     isLastInSequence={isLastInSequence}
                     mapDisplayText={mapDisplayText}
                     retainedMediaPollCounts={retainedMediaPollCounts}
+                    footer={renderToolGroupFooter?.(item.group)}
                   />
                 );
               }
@@ -462,6 +480,7 @@ const AssistantTurnBlock: React.FC<{
                       <ArtifactPreviewCard
                         key={artifact.id}
                         artifact={artifact}
+                        localServiceDirectory={localServiceDirectory}
                         onOpenLocalService={onOpenLocalService}
                         onOpenHtmlFile={onOpenHtmlFile}
                       />

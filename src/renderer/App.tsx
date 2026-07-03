@@ -15,6 +15,7 @@ import { CoworkView } from './components/cowork';
 import { CoworkShortcutDirection, CoworkUiEvent } from './components/cowork/constants';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
+import EngineFailureOverlay from './components/cowork/EngineFailureOverlay';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
 import KitsView from './components/kits/KitsView';
 import { McpView } from './components/mcp';
@@ -39,6 +40,7 @@ import { LogReporterAction, reportYdAnalyzer } from './services/logReporter';
 import { scheduledTaskService } from './services/scheduledTask';
 import { matchesShortcut } from './services/shortcuts';
 import { themeService } from './services/theme';
+import { applyTypographyPreferences } from './services/typography';
 import { RootState, store } from './store';
 import {
   selectCurrentSessionId,
@@ -187,6 +189,7 @@ const App: React.FC = () => {
         mark('authService.init done');
 
         const config = await configService.getConfig();
+        applyTypographyPreferences(config);
         const apiConfig: ApiConfig = {
           apiKey: config.api.key,
           baseUrl: config.api.baseUrl,
@@ -376,8 +379,15 @@ const App: React.FC = () => {
   }, [dispatch]);
 
   const handleToggleSidebar = useCallback(() => {
+    void reportYdAnalyzer({
+      action: LogReporterAction.SidebarAction,
+      source: 'home_sidebar',
+      actionType: isSidebarCollapsed ? 'expand_sidebar' : 'collapse_sidebar',
+      activeView: mainView,
+      isCollapsed: isSidebarCollapsed,
+    });
     setIsSidebarCollapsed((prev) => !prev);
-  }, []);
+  }, [isSidebarCollapsed, mainView]);
 
   const handleNewChat = useCallback(() => {
     // Only clear when already on home (no session) — preserve __home__ draft when returning from a session
@@ -944,20 +954,14 @@ const App: React.FC = () => {
   ) : null;
 
   if (!isInitialized) {
+    // index.html's static splash shows the same startup page until React
+    // mounts; rendering EngineStartupOverlay from the first frame keeps the
+    // whole startup on one continuous screen with no visual handoff.
     return (
       <div className="h-screen overflow-hidden flex flex-col">
         {windowsStandaloneTitleBar}
-        <div className="flex-1 flex items-center justify-center bg-background">
-          <div className="flex flex-col items-center space-y-4">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary to-primary-hover flex items-center justify-center shadow-glow-accent animate-pulse">
-              <ChatBubbleLeftRightIcon className="h-8 w-8 text-white" />
-            </div>
-            <div className="w-24 h-1 rounded-full bg-primary/20 overflow-hidden">
-              <div className="h-full w-1/2 rounded-full bg-primary animate-shimmer" />
-            </div>
-            <div className="text-foreground text-xl font-medium">{i18nService.t('loading')}</div>
-          </div>
-        </div>
+        <div className="flex-1 bg-surface" />
+        <EngineStartupOverlay bootstrapping />
       </div>
     );
   }
@@ -1071,6 +1075,11 @@ const App: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <EngineFailureOverlay
+        onRequestAppSettings={privacyAgreed === true && !showWelcome ? handleShowSettings : undefined}
+        suspended={showSettings || showUpdateModal || pendingPermission !== null || privacyAgreed === false || showWelcome}
+      />
 
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
       {showSettings && (

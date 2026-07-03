@@ -5,6 +5,7 @@ import { isLobsterAIQuotaExhaustedError } from '../../common/coworkErrorClassify
 
 const PROXY_BIND_HOST = '127.0.0.1';
 const RECENT_QUOTA_ERROR_TTL_MS = 30_000;
+const GEMINI_FALLBACK_THOUGHT_SIGNATURE = 'skip_thought_signature_validator';
 
 let proxyServer: http.Server | null = null;
 let proxyPort: number | null = null;
@@ -113,19 +114,22 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     }
 
     const body = await collectRequestBody(req);
+    const upstreamBody = shouldHydrateGeminiChatCompletionsBody(req.url)
+      ? hydrateGeminiChatCompletionsBody(body)
+      : body;
 
     // Build upstream URL: serverBaseUrl + request path
     // OpenClaw sends to /v1/chat/completions, upstream is /api/proxy/v1/chat/completions
     const upstreamPath = `/api/proxy${req.url || '/'}`;
     const upstreamUrl = `${serverBaseUrl}${upstreamPath}`;
 
-    const result = await forwardRequest(upstreamUrl, req.method || 'POST', tokens.accessToken, body, req.headers);
+    const result = await forwardRequest(upstreamUrl, req.method || 'POST', tokens.accessToken, upstreamBody, req.headers);
 
     if ((result.status === 401 || result.status === 403) && tokenRefresher) {
       console.log(`[OpenClawTokenProxy] received ${result.status}, attempting token refresh`);
       const newToken = await tokenRefresher('openclaw-proxy');
       if (newToken) {
-        const retryResult = await forwardRequest(upstreamUrl, req.method || 'POST', newToken, body, req.headers);
+        const retryResult = await forwardRequest(upstreamUrl, req.method || 'POST', newToken, upstreamBody, req.headers);
         pipeResponse(retryResult, res);
         return;
       }
@@ -155,6 +159,124 @@ type ParsedProxySSEPacket = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function toArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function toOptionalRecord(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
+}
+
+function isGeminiModel(model: unknown): boolean {
+  return typeof model === 'string' && model.toLowerCase().includes('gemini');
+}
+
+function shouldHydrateGeminiChatCompletionsBody(url?: string): boolean {
+  const path = url?.split('?')[0] ?? '';
+  return path.endsWith('/chat/completions');
+}
+
+function toNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function getGoogleThoughtSignatureFromExtraContent(extraContent: unknown): string | null {
+  const extraContentObj = toOptionalRecord(extraContent);
+  const googleObj = toOptionalRecord(extraContentObj?.google);
+  return toNonEmptyString(googleObj?.thought_signature);
+}
+
+function getGeminiThoughtSignature(toolCallObj: Record<string, unknown>): string | null {
+  const functionObj = toOptionalRecord(toolCallObj.function);
+  return getGoogleThoughtSignatureFromExtraContent(toolCallObj.extra_content)
+    ?? getGoogleThoughtSignatureFromExtraContent(functionObj?.extra_content)
+    ?? toNonEmptyString(functionObj?.thought_signature);
+}
+
+function withGoogleThoughtSignature(extraContent: unknown, signature: string): Record<string, unknown> {
+  const extraContentObj = toOptionalRecord(extraContent);
+  const nextExtraContent = extraContentObj ? { ...extraContentObj } : {};
+  const googleObj = toOptionalRecord(nextExtraContent.google);
+  nextExtraContent.google = {
+    ...(googleObj ?? {}),
+    thought_signature: signature,
+  };
+  return nextExtraContent;
+}
+
+function ensureGeminiToolCallThoughtSignature(toolCallObj: Record<string, unknown>): boolean {
+  const functionObj = toOptionalRecord(toolCallObj.function);
+  const signature = getGeminiThoughtSignature(toolCallObj)
+    ?? GEMINI_FALLBACK_THOUGHT_SIGNATURE;
+  let changed = false;
+
+  if (getGoogleThoughtSignatureFromExtraContent(toolCallObj.extra_content) !== signature) {
+    toolCallObj.extra_content = withGoogleThoughtSignature(toolCallObj.extra_content, signature);
+    changed = true;
+  }
+
+  if (functionObj) {
+    if (getGoogleThoughtSignatureFromExtraContent(functionObj.extra_content) !== signature) {
+      functionObj.extra_content = withGoogleThoughtSignature(functionObj.extra_content, signature);
+      changed = true;
+    }
+
+    if (functionObj.thought_signature !== signature) {
+      functionObj.thought_signature = signature;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+function hydrateGeminiToolCallThoughtSignatures(body: unknown): boolean {
+  const bodyObj = toOptionalRecord(body);
+  if (!bodyObj || !isGeminiModel(bodyObj.model)) {
+    return false;
+  }
+
+  let changed = false;
+  for (const message of toArray(bodyObj.messages)) {
+    const messageObj = toOptionalRecord(message);
+    if (!messageObj) {
+      continue;
+    }
+
+    for (const toolCall of toArray(messageObj.tool_calls)) {
+      const toolCallObj = toOptionalRecord(toolCall);
+      if (!toolCallObj) {
+        continue;
+      }
+
+      changed = ensureGeminiToolCallThoughtSignature(toolCallObj) || changed;
+    }
+  }
+
+  return changed;
+}
+
+function hydrateGeminiChatCompletionsBody(body: Buffer): Buffer {
+  if (body.length === 0) {
+    return body;
+  }
+
+  try {
+    const parsed = JSON.parse(body.toString('utf8')) as unknown;
+    if (!hydrateGeminiToolCallThoughtSignatures(parsed)) {
+      return body;
+    }
+    return Buffer.from(JSON.stringify(parsed));
+  } catch {
+    return body;
+  }
 }
 
 function getErrorMessage(value: Record<string, unknown>): string {
@@ -448,6 +570,8 @@ function pipeWebReadableResponseWithQuotaScan(
 export const __openClawTokenProxyTestUtils = {
   extractQuotaErrorFromProxyErrorPayload,
   extractQuotaErrorFromProxySSEPacket,
+  hydrateGeminiChatCompletionsBody,
+  hydrateGeminiToolCallThoughtSignatures,
   scanProxySSEBufferForQuotaError,
   flushProxySSEBufferForQuotaError,
   rememberQuotaError,

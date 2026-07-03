@@ -5,11 +5,11 @@ import os from 'os';
 import path from 'path';
 
 import type { CoworkStore, PluginSource } from '../coworkStore';
-import { getElectronNodeRuntimePath } from './coworkUtil';
+import { resolveNodePackageCliCommand } from '../libs/nodeRuntime';
 import {
   findThirdPartyExtensionsDir,
   listBundledOpenClawExtensionManifests,
-} from './openclawLocalExtensions';
+} from '../libs/openclawLocalExtensions';
 
 export interface PluginInstallParams {
   source: PluginSource;
@@ -151,40 +151,9 @@ function runAsync(
   });
 }
 
-/**
- * Resolve the bundled npm-cli.js path so we don't depend on npm being in PATH.
- * On macOS, Electron apps launched from Dock/Launchpad have a minimal PATH that
- * typically doesn't include nvm/homebrew/volta-managed npm installations.
- */
-function resolveNpmCliJs(): string | null {
-  const candidates = app.isPackaged
-    ? [path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin', 'npm-cli.js')]
-    : [
-        path.join(app.getAppPath(), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-        path.join(process.cwd(), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-      ];
-  return candidates.find(c => fs.existsSync(c)) || null;
-}
-
 /** Resolve npm command and base args, preferring the bundled npm-cli.js. */
 function resolveNpmCommand(): { command: string; baseArgs: string[]; env: NodeJS.ProcessEnv; shell: boolean } {
-  const npmCliJs = resolveNpmCliJs();
-  if (npmCliJs) {
-    return {
-      command: getElectronNodeRuntimePath(),
-      baseArgs: [npmCliJs],
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      shell: false,
-    };
-  }
-  // Fallback: rely on system npm in PATH
-  const isWin = process.platform === 'win32';
-  return {
-    command: isWin ? 'npm.cmd' : 'npm',
-    baseArgs: [],
-    env: { ...process.env },
-    shell: isWin,
-  };
+  return resolveNodePackageCliCommand('npm');
 }
 
 /** Humanize a camelCase/snake_case key into a label */
@@ -856,6 +825,10 @@ export class PluginManager {
     return latestVersion;
   }
 }
+
+export const __pluginManagerTestUtils = {
+  resolveNpmCommand,
+};
 
 /** Plugins that should never appear in the user-managed plugin list. */
 const INTERNAL_PLUGIN_IDS = [

@@ -174,7 +174,10 @@ export function getPreviewCardDescriptor(artifact: Artifact): PreviewCardDescrip
     subtitle,
     hoverSubtitle,
     iconFileName: fileName,
-    supportsOpenMenu: Boolean(artifact.filePath),
+    supportsOpenMenu: Boolean(
+      artifact.filePath ||
+        (artifact.type === ArtifactTypeValue.LocalService && (artifact.url || artifact.content)),
+    ),
     defaultOpenAction,
   };
 }

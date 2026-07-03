@@ -134,6 +134,75 @@ const strongPatchValidators = {
       snippets: ['prompt-cache byte-identity', 'turn1AsCurrent', 'turn1AsHistorical'],
     },
   ],
+  'openclaw-live-tool-result-cache-stability.patch': [
+    {
+      file: 'src/agents/embedded-agent-runner/run/attempt.ts',
+      snippets: [
+        'truncateOversizedToolResultsInMessages(\n            activeSession.messages,',
+        'promptToolResultMaxChars,\n            null,',
+      ],
+    },
+    {
+      file: 'src/agents/embedded-agent-runner/tool-result-truncation.ts',
+      snippets: [
+        'aggregateMaxCharsOverride?: number | null',
+        'aggregateMaxCharsOverride === null',
+        'Number.POSITIVE_INFINITY',
+      ],
+    },
+    {
+      file: 'src/agents/embedded-agent-runner/tool-result-truncation.test.ts',
+      snippets: ['keeps prompt projections byte-stable as history grows'],
+    },
+  ],
+  'zz-openclaw-deepseek-cache-probe.patch': [
+    {
+      file: 'src/agents/openai-transport-stream.ts',
+      snippets: [
+        'DEEPSEEK_CACHE_PROBE_LOG_PREFIX = "[DeepSeekCacheProbe]"',
+        'logDeepSeekCacheRequestProbe',
+        'logDeepSeekCacheProbeResult',
+        'cacheRead / promptTokens',
+      ],
+    },
+  ],
+  'zz-openclaw-task-cwd-system-prompt.patch': [
+    {
+      file: 'src/agents/system-prompt.ts',
+      snippets: [
+        'runtimeCwd?: string',
+        'const hasSeparateRuntimeCwd =',
+        '"## Directory Roles"',
+        '`Task working directory: ${sanitizedRuntimeCwd}`',
+        '`Agent workspace: ${sanitizedWorkspaceDir}`',
+        'MEMORY.md, and memory/**',
+        'runtimeCwd: sanitizedRuntimeCwd',
+      ],
+    },
+    {
+      file: 'src/agents/embedded-agent-runner/system-prompt.ts',
+      snippets: ['runtimeCwd?: string', 'runtimeCwd: params.runtimeCwd'],
+    },
+    {
+      file: 'src/agents/embedded-agent-runner/run/attempt.ts',
+      snippets: ['workspaceDir: effectiveWorkspace,\n        runtimeCwd: effectiveCwd,'],
+    },
+    {
+      file: 'src/agents/embedded-agent-runner/compact.ts',
+      snippets: ['workspaceDir: effectiveWorkspace,\n        runtimeCwd: effectiveCwd,'],
+    },
+    {
+      file: 'src/agents/system-prompt.test.ts',
+      snippets: [
+        'separates the task working directory from the persistent agent workspace',
+        'preserves workspace guidance when task cwd is not separate',
+      ],
+    },
+    {
+      file: 'src/agents/embedded-agent-runner/run/attempt.cwd-split.test.ts',
+      snippets: ['expect(promptCall?.runtimeCwd).toBe(taskRepo)'],
+    },
+  ],
 };
 
 function collectMissingStrongPatchSnippets(patchFile) {

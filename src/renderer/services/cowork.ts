@@ -12,6 +12,7 @@ import {
   type CoworkContextUsageRefreshMode as CoworkContextUsageRefreshModeType,
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
+import { normalizeCoworkGoal } from '../../shared/cowork/goal';
 import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
 import { store } from '../store';
 import {
@@ -38,7 +39,9 @@ import {
   setRemoteManaged,
   setSessions,
   setStreaming,
+  updateCurrentSessionModelOverride,
   updateMessageContent,
+  updateSessionGoal,
   updateSessionPinned,
   updateSessionStatus,
   updateSessionTitle,
@@ -254,6 +257,17 @@ class CoworkService {
       this.streamListenerCleanups.push(contextUsageCleanup);
     }
 
+    const goalCleanup = cowork.onStreamGoal?.(({ sessionId, goal }) => {
+      const normalizedGoal = normalizeCoworkGoal(goal);
+      console.debug(
+        `[CoworkGoal] stream update received for session ${sessionId}: status=${normalizedGoal?.status ?? 'none'}, hasGoal=${normalizedGoal ? 'yes' : 'no'}.`,
+      );
+      store.dispatch(updateSessionGoal({ sessionId, goal: normalizedGoal }));
+    });
+    if (goalCleanup) {
+      this.streamListenerCleanups.push(goalCleanup);
+    }
+
     const contextMaintenanceCleanup = cowork.onStreamContextMaintenance?.(({ sessionId, active }) => {
       console.log(`[CoworkService] received context maintenance ${active ? 'start' : 'end'} for session ${sessionId}.`);
       store.dispatch(setContextMaintenance({ sessionId, active }));
@@ -317,6 +331,13 @@ class CoworkService {
       }
     });
     this.streamListenerCleanups.push(errorCleanup);
+
+    const sessionModelOverrideCleanup = cowork.onSessionModelOverrideChanged?.((data) => {
+      store.dispatch(updateCurrentSessionModelOverride(data));
+    });
+    if (sessionModelOverrideCleanup) {
+      this.streamListenerCleanups.push(sessionModelOverrideCleanup);
+    }
 
     // Sessions changed listener (new channel sessions discovered by polling,
     // or reconcileWithHistory replaced messages for a channel session)
@@ -819,6 +840,63 @@ class CoworkService {
     return true;
   }
 
+  async runGoalCommand(options: { sessionId: string; command: string }): Promise<boolean> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.runGoalCommand) {
+      console.error('Cowork goal command API not available');
+      return false;
+    }
+
+    const command = options.command.trim();
+    const action = command.split(/\s+/, 2)[1] ?? 'status';
+    const normalizedAction = action.toLowerCase();
+    const mayStartRun =
+      normalizedAction === 'start'
+      || normalizedAction === 'create'
+      || normalizedAction === 'set'
+      || normalizedAction === 'resume';
+    this.logDiagnostic(
+      'debug',
+      `running goal command for session ${options.sessionId}, action ${action}`,
+    );
+    const stateBeforeGoalCommand = store.getState();
+    const currentSessionBeforeGoalCommand = stateBeforeGoalCommand.cowork.currentSession?.id === options.sessionId
+      ? stateBeforeGoalCommand.cowork.currentSession
+      : undefined;
+    const listedSessionBeforeGoalCommand = stateBeforeGoalCommand.cowork.sessions.find(
+      session => session.id === options.sessionId,
+    );
+    const previousStatus = currentSessionBeforeGoalCommand?.status ?? listedSessionBeforeGoalCommand?.status;
+    if (mayStartRun) {
+      store.dispatch(setStreaming(true));
+      store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'running' }));
+    }
+    const result = await cowork.runGoalCommand({
+      sessionId: options.sessionId,
+      command,
+    });
+    if (!result.success) {
+      if (mayStartRun) {
+        store.dispatch(setStreaming(false));
+        if (previousStatus && previousStatus !== 'running') {
+          store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: previousStatus }));
+        }
+      }
+      if (result.engineStatus) {
+        this.notifyOpenClawStatus(result.engineStatus);
+      }
+      const errorContent = result.code === 'ENGINE_NOT_READY'
+        ? i18nService.t('coworkErrorEngineNotReady')
+        : classifyError(result.error || 'Failed to run goal command');
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: errorContent }));
+      console.error('[CoworkGoal] goal command failed:', result.error);
+      return false;
+    }
+
+    store.dispatch(updateSessionGoal({ sessionId: options.sessionId, goal: result.goal ?? null }));
+    return true;
+  }
+
   async stopSession(sessionId: string): Promise<boolean> {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
@@ -996,6 +1074,25 @@ class CoworkService {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to save session image',
+      };
+    }
+  }
+
+  async exportSessionDiagnostics(options: {
+    sessionId: string;
+  }): Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.exportSessionDiagnostics) {
+      return { success: false, error: 'Cowork diagnostics export API not available' };
+    }
+
+    try {
+      const result = await cowork.exportSessionDiagnostics(options);
+      return result ?? { success: false, error: 'Failed to export session diagnostics' };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to export session diagnostics',
       };
     }
   }
@@ -1321,6 +1418,11 @@ class CoworkService {
 
   async getOpenClawEngineStatus(): Promise<OpenClawEngineStatus | null> {
     return this.loadOpenClawEngineStatus();
+  }
+
+  /** Last known engine status without an IPC round-trip (may be stale/null). */
+  getOpenClawEngineStatusSnapshot(): OpenClawEngineStatus | null {
+    return this.openClawStatus;
   }
 
   async installOpenClawEngine(): Promise<OpenClawEngineStatus | null> {

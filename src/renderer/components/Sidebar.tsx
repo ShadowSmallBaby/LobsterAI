@@ -34,6 +34,7 @@ import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import SkillIcon from './icons/SkillIcon';
 import TrashIcon from './icons/TrashIcon';
 import LoginButton from './LoginButton';
+import SidebarAdBanner from './SidebarAdBanner';
 
 interface SidebarProps {
   onShowSettings: () => void;
@@ -62,9 +63,9 @@ const SidebarNewFeatureBadge = {
   KitsVersion: '2026-06-05',
 } as const;
 const sidebarNavItemClassName =
-  'w-full inline-flex h-7 items-center gap-2 rounded-md px-1.5 text-left text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
+  'w-full inline-flex h-7 items-center gap-2 rounded-md px-1.5 text-left text-sm font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
 const activeSidebarNavItemClassName =
-  `${sidebarNavItemClassName} bg-black/[0.06] hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.07]`;
+  `${sidebarNavItemClassName} bg-black/[0.06] font-medium hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.07]`;
 const sidebarCreateIconClassName = 'h-4 w-4 shrink-0';
 
 type SidebarAnalyticsSource = 'home_sidebar' | 'home_agent_sidebar';
@@ -147,7 +148,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [batchSelectableItems, setBatchSelectableItems] = useState<AgentSidebarBatchItem[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [deletedSessionIds, setDeletedSessionIds] = useState<string[]>([]);
-  const [deletedSubagentItems, setDeletedSubagentItems] = useState<AgentSidebarSubagentBatchItem[]>([]);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -438,9 +438,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (deletedSessions) {
       setDeletedSessionIds(sessionIds);
     }
-    if (deletedSubagents.length > 0) {
-      setDeletedSubagentItems(deletedSubagents);
-    }
     handleExitBatchMode();
   }, [
     batchAgentId,
@@ -531,13 +528,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <div className={`${isMac ? 'pl-[68px]' : ''}`}>{updateBadge}</div>
           <button
             type="button"
-            onClick={() => {
-              reportSidebarAction(isCollapsed ? 'expand_sidebar' : 'collapse_sidebar', {
-                activeView,
-                isCollapsed,
-              });
-              onToggleCollapse();
-            }}
+            onClick={onToggleCollapse}
             className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
             aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
           >
@@ -638,7 +629,6 @@ const Sidebar: React.FC<SidebarProps> = ({
             isBatchMode={isBatchMode}
             batchAgentId={batchAgentId}
             deletedSessionIds={deletedSessionIds}
-            deletedSubagentItems={deletedSubagentItems}
             selectedKeys={selectedKeys}
             onShowCowork={onShowCowork}
             onTaskSelected={(params) => {
@@ -709,7 +699,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
           <div className="flex items-center gap-2">
-            <label className="inline-flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-1.5 text-[13px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]">
+            <label className="inline-flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-1.5 text-[length:var(--lobster-text-sidebarCompact)] font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]">
               <input
                 type="checkbox"
                 checked={isBatchSelectAllChecked}
@@ -735,21 +725,24 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
       ) : (
-        <div className="flex items-center gap-1 pb-2 pl-3 pr-2 pt-1">
-          {!hideLogin && (
-            <div className="flex-1 min-w-0">
-              <LoginButton />
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => onShowSettings()}
-            className={`inline-flex h-7 items-center justify-start gap-1.5 rounded-md px-1.5 text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${hideLogin ? 'w-full' : 'shrink-0'}`}
-            aria-label={i18nService.t('settings')}
-          >
-            <Cog6ToothIcon className="h-4 w-4 shrink-0" />
-            {i18nService.t('settings')}
-          </button>
+        <div className="pb-2 pt-2">
+          <SidebarAdBanner />
+          <div className="flex items-center gap-1 pl-3 pr-2 pt-1">
+            {!hideLogin && (
+              <div className="flex-1 min-w-0">
+                <LoginButton />
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => onShowSettings()}
+              className={`inline-flex h-7 items-center justify-start gap-1.5 rounded-md px-1.5 text-sm font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${hideLogin ? 'w-full' : 'shrink-0'}`}
+              aria-label={i18nService.t('settings')}
+            >
+              <Cog6ToothIcon className="h-4 w-4 shrink-0" />
+              {i18nService.t('settings')}
+            </button>
+          </div>
         </div>
       )}
       {/* Batch Delete Confirmation Modal */}

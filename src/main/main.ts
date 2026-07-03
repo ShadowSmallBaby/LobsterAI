@@ -22,6 +22,7 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
+import { buildGoalSettingMessageMetadata } from '../common/goalCommandDisplay';
 import type { OpenClawSessionPatch } from '../common/openclawSession';
 import { buildSessionTitleFromInput } from '../common/sessionTitle';
 import { buildScheduledTaskEnginePrompt } from '../scheduledTask/enginePrompt';
@@ -96,8 +97,18 @@ import {
 } from '../shared/openclawEngine/constants';
 import { PlatformRegistry } from '../shared/platform';
 import { OpenClawProviderId, ProviderName } from '../shared/providers';
+import {
+  ShareDeploymentCandidateSource,
+  type ShareDeploymentCreateNodeInput,
+  type ShareDeploymentDetectCandidatesInput,
+  type ShareDeploymentGetByLocalServiceInput,
+  ShareDeploymentIpc,
+  ShareDeploymentKind,
+  ShareDeploymentPackageManager,
+  type ShareDeploymentProjectCandidate,
+} from '../shared/shareDeployment/constants';
 import type { ShellOpenFailureReason as ShellOpenFailureReasonType } from '../shared/shell/constants';
-import { ShellOpenFailureReason } from '../shared/shell/constants';
+import { type ShellGetBrowserAppsInput, ShellIpc, ShellOpenFailureReason } from '../shared/shell/constants';
 import { AgentManager } from './agentManager';
 import { APP_NAME, APP_USER_MODEL_ID, DB_FILENAME } from './appConstants';
 import { createLocalFileProtocolResponse } from './artifactLocalFileProtocol';
@@ -138,6 +149,7 @@ import {
   initScheduledTaskHelpers,
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
+import { registerSessionDiagnosticsHandlers } from './ipcHandlers/sessionDiagnostics';
 import { registerSkillHandlers } from './ipcHandlers/skills';
 import {
   type CoworkAgentEngine,
@@ -264,9 +276,21 @@ import {
 import { collectReferencedEnvVarNames, pickReferencedSecretEnvVars } from './libs/openclawSecretEnv';
 import { startOpenClawTokenProxy, stopOpenClawTokenProxy } from './libs/openclawTokenProxy';
 import { migrateMainAgentWorkspace } from './libs/openclawWorkspaceMigration';
-import { isHiddenUserPluginId } from './libs/pluginManager';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
+import { packageNodeServiceDeployment } from './libs/shareDeployment/nodeServiceDeploymentPackager';
+import {
+  analyzeNodeServiceProjectDirectory,
+  detectNodeServiceProjectCandidates,
+} from './libs/shareDeployment/nodeServiceProjectAnalyzer';
+import {
+  buildNodeDeploymentClientSourceKey,
+  buildStaticDeploymentClientSourceKey,
+  getNodeDeployment,
+  getNodeDeploymentByLocalService,
+  uploadNodeDeployment,
+  uploadStaticDeployment,
+} from './libs/shareDeployment/shareDeploymentClient';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
 import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
@@ -298,8 +322,9 @@ import {
   saveOpenClawSessionPolicyConfig,
 } from './openclawSessionPolicy/store';
 import { registerVoiceInputPermissionHandler } from './permissions/voiceInputPermission';
-import { SkillManager } from './skillManager';
-import { getSkillServiceManager } from './skillServices';
+import { isHiddenUserPluginId } from './plugins/pluginManager';
+import { SkillManager } from './skills/skillManager';
+import { getSkillServiceManager } from './skills/skillServices';
 import { SqliteStore } from './sqliteStore';
 import { StartupProfiler } from './startupProfiler';
 import { SubagentMessageStore } from './subagentMessageStore';
@@ -352,6 +377,10 @@ const IPC_MAX_KEYS = 80;
 const IPC_MAX_ITEMS = 40;
 const MAX_INLINE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const MAX_ARTIFACT_SHARE_CONTENT_CHARS = 30 * 1024 * 1024;
+const SHARE_DEPLOYMENT_PROJECT_CANDIDATE_MAX_ITEMS = 24;
+const SHARE_DEPLOYMENT_CANDIDATE_SOURCES = new Set<string>(
+  Object.values(ShareDeploymentCandidateSource),
+);
 const ENGINE_NOT_READY_CODE = 'ENGINE_NOT_READY';
 const LOCAL_WEB_SERVICE_PROBE_TIMEOUT_MS = 700;
 const LOCAL_WEB_SERVICE_TITLE_MAX_LENGTH = 80;
@@ -429,6 +458,11 @@ interface HtmlShareUpdateAccessModeInput {
   accessMode: HtmlShareAccessModeValue;
 }
 
+interface ShareDeploymentAnalyzeProjectDirectoryInput {
+  projectDirectory: string;
+  localServiceUrl?: string;
+}
+
 function sanitizeHtmlShareString(
   value: unknown,
   fieldName: string,
@@ -454,6 +488,22 @@ function sanitizeOptionalHtmlShareString(
 ): string | undefined {
   if (value === undefined || value === null) return undefined;
   return sanitizeHtmlShareString(value, fieldName, maxLength);
+}
+
+function sanitizeOptionalShareDeploymentCommand(
+  value: unknown,
+  fieldName: string,
+  maxLength = 512,
+): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string') {
+    throw new Error(`${fieldName} must be a string.`);
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > maxLength) {
+    throw new Error(`${fieldName} is too long.`);
+  }
+  return trimmed;
 }
 
 function sanitizeHtmlShareTitle(value: unknown): string {
@@ -628,6 +678,188 @@ function sanitizeUpdateHtmlShareAccessModeInput(input: unknown): HtmlShareUpdate
   return {
     shareId: sanitizeHtmlShareString(source.shareId, 'shareId', 64),
     accessMode,
+  };
+}
+
+function sanitizeOptionalShareDeploymentCandidateText(
+  value: unknown,
+  fieldName: string,
+  maxLength = 1024,
+): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length > maxLength) {
+    throw new Error(`${fieldName} is too long.`);
+  }
+  return trimmed;
+}
+
+function sanitizeShareDeploymentCandidateSource(
+  value: unknown,
+): ShareDeploymentProjectCandidate['source'] | null {
+  if (typeof value !== 'string') return null;
+  return SHARE_DEPLOYMENT_CANDIDATE_SOURCES.has(value)
+    ? value as ShareDeploymentProjectCandidate['source']
+    : null;
+}
+
+function sanitizeShareDeploymentCandidateConfidence(value: unknown): number {
+  const confidence = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(confidence)) return 0;
+  return Math.max(0, Math.min(100, Math.round(confidence)));
+}
+
+function sanitizeOptionalShareDeploymentCandidateInteger(
+  value: unknown,
+): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  const numberValue = typeof value === 'number' ? value : Number(value);
+  return Number.isInteger(numberValue) && numberValue >= 0 ? numberValue : undefined;
+}
+
+function sanitizeShareDeploymentProjectCandidate(
+  value: unknown,
+  index: number,
+): ShareDeploymentProjectCandidate | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const directory = sanitizeOptionalShareDeploymentCandidateText(
+    source.directory,
+    `projectCandidates[${index}].directory`,
+    4096,
+  );
+  if (!directory) return null;
+  const candidateSource = sanitizeShareDeploymentCandidateSource(source.source);
+  if (!candidateSource) return null;
+  const reason = sanitizeOptionalShareDeploymentCandidateText(
+    source.reason,
+    `projectCandidates[${index}].reason`,
+  );
+  const evidence = sanitizeOptionalShareDeploymentCandidateText(
+    source.evidence,
+    `projectCandidates[${index}].evidence`,
+    2048,
+  );
+  const messageId = sanitizeOptionalShareDeploymentCandidateText(
+    source.messageId,
+    `projectCandidates[${index}].messageId`,
+    128,
+  );
+  const artifactId = sanitizeOptionalShareDeploymentCandidateText(
+    source.artifactId,
+    `projectCandidates[${index}].artifactId`,
+    128,
+  );
+  const pid = sanitizeOptionalShareDeploymentCandidateInteger(source.pid);
+  const detectedAt = sanitizeOptionalShareDeploymentCandidateInteger(source.detectedAt);
+  return {
+    directory,
+    source: candidateSource,
+    confidence: sanitizeShareDeploymentCandidateConfidence(source.confidence),
+    ...(reason ? { reason } : {}),
+    ...(evidence ? { evidence } : {}),
+    ...(messageId ? { messageId } : {}),
+    ...(artifactId ? { artifactId } : {}),
+    ...(pid !== undefined ? { pid } : {}),
+    ...(detectedAt !== undefined ? { detectedAt } : {}),
+  };
+}
+
+function sanitizeShareDeploymentProjectCandidates(value: unknown): ShareDeploymentProjectCandidate[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error('projectCandidates must be an array.');
+  }
+  return value
+    .slice(0, SHARE_DEPLOYMENT_PROJECT_CANDIDATE_MAX_ITEMS)
+    .map((candidate, index) => sanitizeShareDeploymentProjectCandidate(candidate, index))
+    .filter((candidate): candidate is ShareDeploymentProjectCandidate => Boolean(candidate));
+}
+
+function sanitizeShareDeploymentDetectProjectCandidatesInput(
+  input: unknown,
+): ShareDeploymentDetectCandidatesInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid deployment project detection request.');
+  }
+  const source = input as Record<string, unknown>;
+  return {
+    localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
+    workingDirectory: sanitizeOptionalHtmlShareString(source.workingDirectory, 'workingDirectory', 4096),
+    projectCandidates: sanitizeShareDeploymentProjectCandidates(source.projectCandidates),
+    cachedProjectDirectory: sanitizeOptionalHtmlShareString(
+      source.cachedProjectDirectory,
+      'cachedProjectDirectory',
+      4096,
+    ),
+  };
+}
+
+function sanitizeShareDeploymentAnalyzeProjectDirectoryInput(
+  input: unknown,
+): ShareDeploymentAnalyzeProjectDirectoryInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid deployment project analysis request.');
+  }
+  const source = input as Record<string, unknown>;
+  return {
+    projectDirectory: sanitizeHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
+    localServiceUrl: sanitizeOptionalHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
+  };
+}
+
+function sanitizeShareDeploymentPort(value: unknown): number {
+  const port = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error('port must be a valid TCP port.');
+  }
+  return port;
+}
+
+function sanitizeShareDeploymentCreateNodeInput(input: unknown): ShareDeploymentCreateNodeInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid node deployment request.');
+  }
+  const source = input as Record<string, unknown>;
+  return {
+    sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
+    artifactId: sanitizeHtmlShareString(source.artifactId, 'artifactId', 128),
+    title: sanitizeHtmlShareTitle(source.title),
+    localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
+    projectDirectory: sanitizeHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
+    accessMode: sanitizeHtmlShareAccessMode(source.accessMode, HtmlShareAccessMode.Code),
+    nodeVersion: sanitizeHtmlShareString(source.nodeVersion, 'nodeVersion', 32),
+    installCommand: sanitizeOptionalShareDeploymentCommand(source.installCommand, 'installCommand'),
+    buildCommand: sanitizeOptionalShareDeploymentCommand(source.buildCommand, 'buildCommand'),
+    startCommand: sanitizeOptionalShareDeploymentCommand(source.startCommand, 'startCommand'),
+    port: sanitizeShareDeploymentPort(source.port),
+  };
+}
+
+function sanitizeShareDeploymentGetByLocalServiceInput(
+  input: unknown,
+): ShareDeploymentGetByLocalServiceInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid deployment lookup request.');
+  }
+  const source = input as Record<string, unknown>;
+  return {
+    sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
+    localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
+    projectDirectory: sanitizeOptionalHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
+  };
+}
+
+function sanitizeShellGetBrowserAppsInput(input: unknown): ShellGetBrowserAppsInput {
+  if (input === undefined || input === null) return {};
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid browser app lookup request.');
+  }
+  const source = input as Record<string, unknown>;
+  return {
+    projectDirectory: sanitizeOptionalHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
   };
 }
 
@@ -2236,6 +2468,18 @@ const bindCoworkRuntimeForwarder = (): void => {
     });
   });
 
+  runtime.on('goalUpdate', (sessionId: string, goal: unknown) => {
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach(win => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send(CoworkIpcChannel.StreamGoal, { sessionId, goal });
+      } catch (error) {
+        console.error('[CoworkRuntime] failed to forward goal update:', error);
+      }
+    });
+  });
+
   runtime.on('contextMaintenance', (sessionId: string, active: boolean) => {
     const windows = BrowserWindow.getAllWindows();
     console.log(
@@ -2664,6 +2908,7 @@ function validateCoworkImageAttachmentsForRuntime(
 }
 
 function buildCoworkUserSelectionMetadata(options: {
+  prompt?: string;
   skillIds?: string[];
   kitIds?: string[];
   kitReferences?: KitReference[];
@@ -2671,7 +2916,9 @@ function buildCoworkUserSelectionMetadata(options: {
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
   imageAttachmentPreviews?: CoworkImageAttachmentPreview[];
 }): Record<string, unknown> | undefined {
-  const metadata: Record<string, unknown> = {};
+  const metadata: Record<string, unknown> = {
+    ...(options.prompt ? buildGoalSettingMessageMetadata(options.prompt) : undefined),
+  };
 
   if (options.skillIds?.length) {
     metadata.skillIds = options.skillIds;
@@ -2774,6 +3021,52 @@ const focusMainWindowForReason = (reason: string): void => {
 
 let isQuitting = false;
 let isDataMigrationRestoreInProgress = false;
+let isHidingMainWindowAfterFullScreen = false;
+
+const hideMainWindowForClose = (win: BrowserWindow): void => {
+  if (win.isDestroyed()) return;
+
+  if (!isMac || !win.isFullScreen()) {
+    console.log(`[Main] hiding main window for close, platform=${process.platform}, fullscreen=${win.isFullScreen()}, maximized=${win.isMaximized()}, visible=${win.isVisible()}`);
+    win.hide();
+    return;
+  }
+
+  if (isHidingMainWindowAfterFullScreen) {
+    console.log('[Main] hide after full-screen close is already pending');
+    return;
+  }
+
+  console.log('[Main] main window close requested while macOS full-screen; leaving full-screen before hiding');
+  isHidingMainWindowAfterFullScreen = true;
+  let settled = false;
+  let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const finish = (source: 'leave-full-screen' | 'timeout') => {
+    if (settled) return;
+    settled = true;
+    isHidingMainWindowAfterFullScreen = false;
+    if (fallbackTimer) {
+      clearTimeout(fallbackTimer);
+      fallbackTimer = null;
+    }
+    if (!win.isDestroyed()) {
+      console.log(`[Main] hiding main window after macOS full-screen exit, source=${source}, fullscreen=${win.isFullScreen()}, visible=${win.isVisible()}`);
+      win.hide();
+    }
+  };
+
+  win.once('leave-full-screen', () => {
+    setTimeout(() => finish('leave-full-screen'), 100);
+  });
+  fallbackTimer = setTimeout(() => finish('timeout'), 1_500);
+  try {
+    win.setFullScreen(false);
+  } catch (error) {
+    console.warn('[Main] failed to leave macOS full-screen before hiding main window:', error);
+    finish('timeout');
+  }
+};
 
 // 存储活跃的流式请求控制器
 const activeStreamControllers = new Map<string, AbortController>();
@@ -3448,7 +3741,8 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.on('window-close', () => {
+  ipcMain.on('window-close', (event) => {
+    console.log(`[Main] window-close IPC received from renderer, url=${event.sender.getURL()}`);
     mainWindow?.close();
   });
 
@@ -4715,6 +5009,34 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('auth:getActiveClientBanner', async () => {
+    try {
+      const serverBaseUrl = getServerApiBaseUrl();
+      const url = appendKeyfromQuery(`${serverBaseUrl}/api/client-banners/active?placement=desktop_sidebar`);
+      const resp = await net.fetch(url);
+      if (!resp.ok) return { success: false };
+      const body = (await resp.json()) as { code: number; data: Record<string, unknown> | null };
+      if (body.code !== 0) return { success: false };
+      return { success: true, data: body.data ?? null };
+    } catch {
+      return { success: false };
+    }
+  });
+
+  ipcMain.handle('auth:getActiveClientBanners', async () => {
+    try {
+      const serverBaseUrl = getServerApiBaseUrl();
+      const url = appendKeyfromQuery(`${serverBaseUrl}/api/client-banners/active-list?placement=desktop_sidebar`);
+      const resp = await net.fetch(url);
+      if (!resp.ok) return { success: false };
+      const body = (await resp.json()) as { code: number; data: Record<string, unknown>[] | null };
+      if (body.code !== 0) return { success: false };
+      return { success: true, data: Array.isArray(body.data) ? body.data : [] };
+    } catch {
+      return { success: false };
+    }
+  });
+
   ipcMain.handle('auth:logout', async () => {
     try {
       const tokens = getAuthTokens();
@@ -5217,6 +5539,168 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to disable share',
+      };
+    }
+  });
+
+  ipcMain.handle(ShareDeploymentIpc.DetectProjectCandidates, async (_event, input: unknown) => {
+    try {
+      const options = sanitizeShareDeploymentDetectProjectCandidatesInput(input);
+      const candidates = await detectNodeServiceProjectCandidates(options);
+      return {
+        success: true,
+        candidates,
+      };
+    } catch (error) {
+      console.error('[ShareDeployment] failed to detect project candidates:', error);
+      return {
+        success: false,
+        candidates: [],
+        error: error instanceof Error ? error.message : 'Failed to detect project candidates',
+      };
+    }
+  });
+
+  ipcMain.handle(ShareDeploymentIpc.AnalyzeProjectDirectory, async (_event, input: unknown) => {
+    try {
+      const options = sanitizeShareDeploymentAnalyzeProjectDirectoryInput(input);
+      return await analyzeNodeServiceProjectDirectory(options);
+    } catch (error) {
+      console.error('[ShareDeployment] failed to analyze project directory:', error);
+      return {
+        success: false,
+        projectDirectory: '',
+        packageManager: ShareDeploymentPackageManager.Unknown,
+        nodeVersion: '20',
+        installCommand: 'npm install',
+        buildCommand: '',
+        startCommand: '',
+        totalFiles: 0,
+        totalBytes: 0,
+        excludedCount: 0,
+        warnings: [],
+        blockers: [error instanceof Error ? error.message : 'Failed to analyze project directory'],
+      };
+    }
+  });
+
+  ipcMain.handle(ShareDeploymentIpc.CreateNodeDeployment, async (_event, input: unknown) => {
+    let archivePath: string | undefined;
+    try {
+      const options = sanitizeShareDeploymentCreateNodeInput(input);
+      console.debug(
+        `[ShareDeployment] received node deployment request for session ${options.sessionId} and artifact ${options.artifactId}`,
+      );
+      const packaged = await packageNodeServiceDeployment({
+        projectDirectory: options.projectDirectory,
+        localServiceUrl: options.localServiceUrl,
+        installCommand: options.installCommand,
+        buildCommand: options.buildCommand,
+        startCommand: options.startCommand,
+        port: options.port,
+      });
+      archivePath = packaged.archivePath;
+      const isStaticDeployment = packaged.deploymentKind === ShareDeploymentKind.StaticSite;
+      const clientSourceKey = isStaticDeployment
+        ? buildStaticDeploymentClientSourceKey({
+            sessionId: options.sessionId,
+            localServiceUrl: options.localServiceUrl,
+            projectDirectory: options.projectDirectory,
+          })
+        : buildNodeDeploymentClientSourceKey({
+            sessionId: options.sessionId,
+            localServiceUrl: options.localServiceUrl,
+            projectDirectory: options.projectDirectory,
+          });
+      const result = isStaticDeployment
+        ? await uploadStaticDeployment(
+            getServerApiBaseUrl(),
+            getHtmlSharePublicBaseUrl(),
+            fetchWithAuth,
+            {
+              ...options,
+              archivePath: packaged.archivePath,
+              sourceSha256: packaged.sourceSha256,
+              analysis: packaged.analysis,
+              archiveBytes: packaged.archiveBytes,
+              clientSourceKey,
+              deploymentKind: ShareDeploymentKind.StaticSite,
+              entryFile: packaged.entryFile ?? 'index.html',
+              spaFallback: packaged.spaFallback ?? true,
+            },
+          )
+        : await uploadNodeDeployment(
+            getServerApiBaseUrl(),
+            getHtmlSharePublicBaseUrl(),
+            fetchWithAuth,
+            {
+              ...options,
+              archivePath: packaged.archivePath,
+              sourceSha256: packaged.sourceSha256,
+              analysis: packaged.analysis,
+              archiveBytes: packaged.archiveBytes,
+              clientSourceKey,
+              deploymentKind: ShareDeploymentKind.NodeService,
+            },
+          );
+      console.debug(
+        `[ShareDeployment] local service deployment request finished with kind ${packaged.deploymentKind} success ${result.success} and code ${result.code ?? 'none'}`,
+      );
+      return result;
+    } catch (error) {
+      console.error('[ShareDeployment] failed to create node deployment:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create node deployment',
+      };
+    } finally {
+      if (archivePath) {
+        const archiveDir = path.dirname(archivePath);
+        fs.promises
+          .rm(archiveDir, { recursive: true, force: true })
+          .then(() => {
+            console.debug(`[ShareDeployment] cleaned temporary archive directory ${archiveDir}`);
+          })
+          .catch((cleanupError): undefined => {
+            console.warn('[ShareDeployment] temporary archive cleanup failed:', cleanupError);
+            return undefined;
+          });
+      }
+    }
+  });
+
+  ipcMain.handle(ShareDeploymentIpc.Get, async (_event, deploymentId: unknown) => {
+    try {
+      const id = sanitizeHtmlShareString(deploymentId, 'deploymentId', 128);
+      return await getNodeDeployment(
+        getServerApiBaseUrl(),
+        getHtmlSharePublicBaseUrl(),
+        fetchWithAuth,
+        id,
+      );
+    } catch (error) {
+      console.error('[ShareDeployment] failed to load deployment:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to load deployment',
+      };
+    }
+  });
+
+  ipcMain.handle(ShareDeploymentIpc.GetByLocalService, async (_event, input: unknown) => {
+    try {
+      const options = sanitizeShareDeploymentGetByLocalServiceInput(input);
+      return await getNodeDeploymentByLocalService(
+        getServerApiBaseUrl(),
+        getHtmlSharePublicBaseUrl(),
+        fetchWithAuth,
+        options,
+      );
+    } catch (error) {
+      console.error('[ShareDeployment] failed to load deployment by local service:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to load deployment',
       };
     }
   });
@@ -5837,6 +6321,7 @@ if (!gotTheLock) {
         }
         const imageAttachmentPreviews = buildCoworkImageAttachmentPreviews(options.imageAttachments);
         const messageMetadata = buildCoworkUserSelectionMetadata({
+          prompt: options.prompt,
           skillIds: options.activeSkillIds,
           kitIds: options.kitIds,
           kitReferences: options.kitReferences,
@@ -6056,6 +6541,47 @@ if (!gotTheLock) {
       }
     },
   );
+
+  ipcMain.handle(CoworkIpcChannel.GoalCommand, async (
+    _event,
+    options: { sessionId: string; command: string },
+  ) => {
+    try {
+      const engineStatus = await ensureOpenClawRunningForCowork();
+      if (engineStatus.phase !== 'running') {
+        return getEngineNotReadyResponse(engineStatus);
+      }
+      const sessionId = typeof options?.sessionId === 'string' ? options.sessionId.trim() : '';
+      const command = typeof options?.command === 'string' ? options.command.trim() : '';
+      if (!sessionId || !command) {
+        return {
+          success: false,
+          error: 'Session id and goal command are required.',
+        };
+      }
+      const runtime = getCoworkEngineRouter();
+      if (!runtime.runGoalCommand) {
+        return {
+          success: false,
+          error: 'Goal commands are not supported by the current runtime.',
+        };
+      }
+      const action = command.split(/\s+/, 2)[1] ?? 'status';
+      console.debug(
+        '[CoworkGoal] goal command IPC received.',
+        `Session ${sessionId}.`,
+        `Action ${action}.`,
+      );
+      const goal = await runtime.runGoalCommand(sessionId, command);
+      return { success: true, goal };
+    } catch (error) {
+      console.error('[CoworkGoal] goal command IPC failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to run goal command',
+      };
+    }
+  });
 
   ipcMain.handle('cowork:session:stop', async (_event, sessionId: string) => {
     try {
@@ -6724,6 +7250,14 @@ if (!gotTheLock) {
     },
   );
 
+  // ── Session diagnostics IPC ────────────────────────────────────────────
+
+  registerSessionDiagnosticsHandlers({
+    getDatabase: () => getStore().getDatabase(),
+    getAppVersion: () => app.getVersion(),
+    getDownloadsPath: () => app.getPath('downloads'),
+  });
+
   // ── Subagent tracking IPC ──────────────────────────────────────────────
 
   registerCoworkSubagentHandlers({
@@ -6854,13 +7388,17 @@ if (!gotTheLock) {
         patch.model = normalizeOpenClawModelRef(patch.model);
       }
       const runtime = getCoworkEngineRouter();
-      await runtime.patchSession(sessionId, patch);
+      const patchResult = await runtime.patchSession(sessionId, patch);
 
       if (patch.model !== undefined) {
+        const modelOverride =
+          patchResult && typeof patchResult.modelOverride === 'string'
+            ? patchResult.modelOverride
+            : patch.model ?? '';
         getCoworkStore().updateSession(
           sessionId,
           {
-            modelOverride: patch.model ?? '',
+            modelOverride,
           },
           { touchUpdatedAt: false },
         );
@@ -8841,7 +9379,7 @@ if (!gotTheLock) {
   };
 
   // Shell handlers - 打开文件/文件夹
-  ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
+  ipcMain.handle(ShellIpc.OpenPath, async (_event, filePath: string) => {
     try {
       const normalizedPath = normalizeWindowsShellPath(filePath);
       const result = await shell.openPath(normalizedPath);
@@ -8859,7 +9397,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:showItemInFolder', async (_event, filePath: string) => {
+  ipcMain.handle(ShellIpc.ShowItemInFolder, async (_event, filePath: string) => {
     try {
       const normalizedPath = normalizeWindowsShellPath(filePath);
       try {
@@ -8884,7 +9422,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+  ipcMain.handle(ShellIpc.OpenExternal, async (_event, url: string) => {
     try {
       await shell.openExternal(url);
       return { success: true };
@@ -8893,7 +9431,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:openHtmlInBrowser', async (_event, htmlContent: string) => {
+  ipcMain.handle(ShellIpc.OpenHtmlInBrowser, async (_event, htmlContent: string) => {
     try {
       const tmpDir = path.join(os.tmpdir(), 'lobsterai-preview');
       fs.mkdirSync(tmpDir, { recursive: true });
@@ -8906,7 +9444,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:getAppsForFile', async (_event, filePath: string) => {
+  ipcMain.handle(ShellIpc.GetAppsForFile, async (_event, filePath: string) => {
     try {
       const { getAppsForFile } = await import('./shellApps');
       const apps = await getAppsForFile(filePath);
@@ -8920,7 +9458,22 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:openPathWithApp', async (_event, filePath: string, appPath: string) => {
+  ipcMain.handle(ShellIpc.GetBrowserApps, async (_event, input: unknown) => {
+    try {
+      const options = sanitizeShellGetBrowserAppsInput(input);
+      const { getBrowserApps } = await import('./shellApps');
+      const apps = await getBrowserApps(options);
+      return { success: true, apps };
+    } catch (error) {
+      return {
+        success: false,
+        apps: [],
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  ipcMain.handle(ShellIpc.OpenPathWithApp, async (_event, filePath: string, appPath: string) => {
     const normalizedPath = normalizeWindowsShellPath(filePath);
     try {
       const { openFileWithApp } = await import('./shellApps');
@@ -8932,6 +9485,22 @@ if (!gotTheLock) {
         normalizedPath,
         error instanceof Error ? error.message : 'Unknown error',
       );
+    }
+  });
+
+  ipcMain.handle(ShellIpc.OpenUrlWithApp, async (_event, url: string, appPath: string) => {
+    try {
+      const { openUrlWithApp } = await import('./shellApps');
+      await openUrlWithApp(url, appPath);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.warn('[Shell] failed to open URL with selected app:', url, appPath, error);
+      return {
+        success: false,
+        error: message,
+        reason: ShellOpenFailureReason.OpenFailed,
+      };
     }
   });
 
@@ -9580,12 +10149,13 @@ if (!gotTheLock) {
     mainWindow.on('close', (e) => {
       windowStatePersist.cleanup();
       windowStatePersist.persist();
+      console.log(`[Main] main window close event, isQuitting=${isQuitting}, isDev=${isDev}, platform=${process.platform}, fullscreen=${mainWindow?.isFullScreen() ?? false}, visible=${mainWindow?.isVisible() ?? false}`);
 
       // In development, close should actually quit so `npm run electron:dev`
       // restarts from a clean process. In production we keep tray behavior.
       if (mainWindow && !isQuitting && !isDev) {
         e.preventDefault();
-        mainWindow.hide();
+        hideMainWindowForClose(mainWindow);
       }
     });
 

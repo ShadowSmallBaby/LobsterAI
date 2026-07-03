@@ -43,6 +43,15 @@ const GATEWAY_RESTART_DELAYS = [3_000, 5_000, 10_000, 20_000, 30_000];
 const OPENCLAW_GATEWAY_MAX_OLD_SPACE_MB = 4096;
 const OPENCLAW_GATEWAY_MAX_OLD_SPACE_OPTION = `--max-old-space-size=${OPENCLAW_GATEWAY_MAX_OLD_SPACE_MB}`;
 const NODE_MAX_OLD_SPACE_RE = /(?:^|\s)--max-old-space-size(?:=|\s|$)/;
+const GATEWAY_RECENT_OUTPUT_LINE_LIMIT = 80;
+const OPENCLAW_CONFIG_STARTUP_FAILURE_PATTERNS = [
+  /invalid config(?:\s+at|:|\s)/i,
+  /config validation failed:/i,
+  /json5 parse failed:/i,
+  /failed to parse .* as json5/i,
+  /openclaw\.json[\s\S]{0,240}(?:syntaxerror|unexpected token|invalid)/i,
+  /(?:syntaxerror|unexpected token|invalid)[\s\S]{0,240}openclaw\.json/i,
+];
 
 export type { OpenClawEnginePhase } from '../../shared/openclawEngine/constants';
 
@@ -63,6 +72,11 @@ export interface OpenClawGatewayConnectionInfo {
   url: string | null;
   clientEntryPath: string | null;
 }
+
+export const isOpenClawConfigStartupFailure = (text: string | null | undefined): boolean => {
+  if (!text) return false;
+  return OPENCLAW_CONFIG_STARTUP_FAILURE_PATTERNS.some((pattern) => pattern.test(text));
+};
 
 interface OpenClawEngineManagerEvents {
   status: (status: OpenClawEngineStatus) => void;
@@ -185,6 +199,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private desiredVersion: string;
   private status: OpenClawEngineStatus;
   private gatewayProcess: GatewayProcess | null = null;
+  private readonly gatewayRecentOutput = new WeakMap<GatewayProcess, string[]>();
   private readonly expectedGatewayExits = new WeakSet<object>();
   private gatewayRestartTimer: NodeJS.Timeout | null = null;
   private gatewayRestartAttempt = 0;
@@ -635,12 +650,14 @@ export class OpenClawEngineManager extends EventEmitter {
     const ready = await this.waitForGatewayReady(port, GATEWAY_BOOT_TIMEOUT_MS);
     console.log(`[OpenClaw] startGateway: waitForGatewayReady returned (${elapsed()}), ready=${ready}`);
     if (!ready) {
-      this.setStatus({
-        phase: 'error',
-        version: runtime.version,
-        message: 'OpenClaw gateway failed to become healthy in time.',
-        canRetry: true,
-      });
+      if (this.status.phase !== 'error') {
+        this.setStatus({
+          phase: 'error',
+          version: runtime.version,
+          message: 'OpenClaw gateway failed to become healthy in time.',
+          canRetry: true,
+        });
+      }
       this.stopGatewayProcess(child);
       return this.getStatus();
     }
@@ -1461,7 +1478,23 @@ export class OpenClawEngineManager extends EventEmitter {
   private attachGatewayProcessLogs(child: GatewayProcess): void {
     ensureDir(this.logsDir);
     this.pruneGatewayLogsIfNeeded();
+    const appendRecentOutput = (chunk: Buffer | string, stream: 'stdout' | 'stderr') => {
+      const text = typeof chunk === 'string' ? chunk : chunk.toString();
+      const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trimEnd())
+        .filter((line) => line.length > 0)
+        .map((line) => `[${stream}] ${line}`);
+      if (lines.length === 0) return;
+      const recent = this.gatewayRecentOutput.get(child) ?? [];
+      recent.push(...lines);
+      if (recent.length > GATEWAY_RECENT_OUTPUT_LINE_LIMIT) {
+        recent.splice(0, recent.length - GATEWAY_RECENT_OUTPUT_LINE_LIMIT);
+      }
+      this.gatewayRecentOutput.set(child, recent);
+    };
     const appendLog = (chunk: Buffer | string, stream: 'stdout' | 'stderr') => {
+      appendRecentOutput(chunk, stream);
       this.pruneGatewayLogsIfNeeded();
       const text = typeof chunk === 'string' ? chunk : chunk.toString();
       const line = `[${new Date().toISOString()}] [${stream}] ${text}`;
@@ -1516,6 +1549,8 @@ export class OpenClawEngineManager extends EventEmitter {
 
     (child as NodeJS.EventEmitter).once('exit', (code: number | null, signal?: string) => {
       console.log(`${gwDiagTs()} gateway process exited with code=${code}, signal=${signal ?? 'none'}`);
+      const recentOutput = (this.gatewayRecentOutput.get(child) ?? []).join('\n');
+      this.gatewayRecentOutput.delete(child);
       if (this.gatewayProcess === child) {
         this.gatewayProcess = null;
       }
@@ -1525,10 +1560,23 @@ export class OpenClawEngineManager extends EventEmitter {
       }
       if (this.shutdownRequested) return;
 
+      let tail = recentOutput;
       try {
-        const tail = fs.readFileSync(this.getGatewayLogPath(), 'utf8').split('\n').slice(-30).join('\n');
+        tail = tail || fs.readFileSync(this.getGatewayLogPath(), 'utf8').split('\n').slice(-30).join('\n');
         console.error(`${gwDiagTs()} gateway log tail (last 30 lines before crash):\n${tail}`);
       } catch { /* log file may not exist */ }
+
+      if (isOpenClawConfigStartupFailure(tail)) {
+        console.error(`${gwDiagTs()} gateway exited during startup because OpenClaw config is invalid; auto-restart suppressed`);
+        this.gatewayRestartAttempt = 0;
+        this.setStatus({
+          phase: 'error',
+          version: this.status.version,
+          message: 'OpenClaw gateway startup stopped because openclaw.json is invalid. Repair the config or use Quick Repair before restarting.',
+          canRetry: true,
+        });
+        return;
+      }
 
       this.setStatus({
         phase: 'error',

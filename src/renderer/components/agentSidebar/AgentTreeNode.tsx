@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
-import type { SubagentSessionSummary } from '../../types/cowork';
 import { getAgentDisplayName, isDefaultAgentId, shouldUseDefaultAgentIcon } from '../../utils/agentDisplay';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
 import AgentConfirmDialog from '../agent/AgentConfirmDialog';
@@ -13,9 +12,8 @@ import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import PushPinIcon from '../icons/PushPinIcon';
 import TrashIcon from '../icons/TrashIcon';
 import AgentTaskRow from './AgentTaskRow';
-import { createSessionBatchKey, createSubagentBatchKey } from './batchSelection';
+import { createSessionBatchKey } from './batchSelection';
 import ExpandAgentTasksRow from './ExpandAgentTasksRow';
-import SubagentTaskRow from './SubagentTaskRow';
 import type { AgentSidebarAgentNode, AgentSidebarTaskNode } from './types';
 
 interface AgentTreeNodeProps {
@@ -24,10 +22,6 @@ interface AgentTreeNodeProps {
   batchAgentId: string | null;
   selectedKeys: Set<string>;
   showBatchOption?: boolean;
-  subagentsBySessionId?: Record<string, SubagentSessionSummary[]>;
-  selectedSubagentId?: string | null;
-  onSelectSubagent?: (subagent: SubagentSessionSummary) => void;
-  onDeleteSubagent?: (subagent: SubagentSessionSummary) => Promise<void>;
   onToggleExpanded: (agentId: string) => void;
   onEditAgent: (agent: AgentSidebarAgentNode) => void;
   onCreateTask: (agent: AgentSidebarAgentNode) => void;
@@ -91,10 +85,6 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
   batchAgentId,
   selectedKeys,
   showBatchOption = false,
-  subagentsBySessionId,
-  selectedSubagentId,
-  onSelectSubagent,
-  onDeleteSubagent,
   onToggleExpanded,
   onEditAgent,
   onCreateTask,
@@ -285,7 +275,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
         <button
           type="button"
           onClick={handleAgentClick}
-          className="flex h-full w-full items-center gap-2 rounded-md py-0 pl-3.5 pr-12 text-left text-[14px] font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+          className="flex h-full w-full items-center gap-2 rounded-md py-0 pl-3.5 pr-12 text-left text-sm font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
           role="treeitem"
           aria-level={1}
           aria-expanded={agent.isExpanded}
@@ -293,7 +283,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
           <span className="flex h-4 w-4 shrink-0 items-center justify-center leading-none text-foreground">
             <AgentAvatar agent={agent} />
           </span>
-          <span className="min-w-0 flex-1 truncate opacity-[0.76]">
+          <span className="min-w-0 flex-1 truncate">
             {agentName}
           </span>
         </button>
@@ -446,7 +436,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
               )}
 
               {!agent.isLoadingTasks && !agent.hasLoadError && agent.tasks.length === 0 && (
-                <div className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center pl-[38px] pr-2.5 text-[13px] text-foreground opacity-[0.28]">
+                <div className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center pl-[38px] pr-2.5 text-[length:var(--lobster-text-sidebarCompact)] text-secondary">
                   {i18nService.t('myAgentSidebarNoTasks')}
                 </div>
               )}
@@ -459,7 +449,6 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
                     isSelected={selectedKeys.has(createSessionBatchKey(task.id))}
                     isSelectionDisabled={isOutsideBatchAgent}
                     showBatchOption={showBatchOption && !isBatchMode}
-                    hasActiveSubagent={task.isSelected && selectedSubagentId != null}
                     onSelect={() => onSelectTask(task)}
                     onDelete={() => onDeleteTask(task)}
                     onShare={() => onShareTask(task)}
@@ -468,31 +457,8 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
                     onToggleSelection={() => onToggleSelection(createSessionBatchKey(task.id), task.agentId)}
                     onEnterBatchMode={() => onEnterBatchMode(task)}
                     onSidebarAction={onSidebarAction}
-                    analyticsParams={getTaskActionParams?.(task, task.isSelected && selectedSubagentId != null)}
+                    analyticsParams={getTaskActionParams?.(task)}
                   />
-                  {task.isSelected && subagentsBySessionId?.[task.id]?.map((sub) => (
-                    <SubagentTaskRow
-                      key={sub.id}
-                      subagent={sub}
-                      isBatchMode={isBatchAgent}
-                      isSelected={
-                        isBatchAgent
-                          ? selectedKeys.has(createSubagentBatchKey(task.id, sub.id))
-                          : sub.id === selectedSubagentId
-                      }
-                      onSelect={() => onSelectSubagent?.(sub)}
-                      onDelete={() => onDeleteSubagent?.(sub) ?? Promise.resolve()}
-                      onToggleSelection={() => onToggleSelection(
-                        createSubagentBatchKey(task.id, sub.id),
-                        task.agentId,
-                      )}
-                      onSidebarAction={onSidebarAction}
-                      analyticsParams={{
-                        isCurrentSubagent: sub.id === selectedSubagentId,
-                        subagentStatus: sub.status,
-                      }}
-                    />
-                  ))}
                 </React.Fragment>
               ))}
 

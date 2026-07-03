@@ -1,4 +1,8 @@
-import { expect, test, vi } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+
+const nodeRuntimeMocks = vi.hoisted(() => ({
+  resolveNodeRuntimeForSpawn: vi.fn(),
+}));
 
 vi.mock('electron', () => ({
   app: { getAppPath: () => process.cwd(), getPath: () => '/tmp' },
@@ -6,9 +10,15 @@ vi.mock('electron', () => ({
   session: { defaultSession: { webRequest: { onBeforeSendHeaders: vi.fn() } } },
 }));
 
+vi.mock('../libs/nodeRuntime', () => nodeRuntimeMocks);
+
 import { __skillManagerTestUtils } from './skillManager';
 
-const { parseFrontmatter, isTruthy, extractDescription } = __skillManagerTestUtils;
+const { parseFrontmatter, isTruthy, extractDescription, getSkillScriptRuntimeCandidates } = __skillManagerTestUtils;
+
+afterEach(() => {
+  nodeRuntimeMocks.resolveNodeRuntimeForSpawn.mockReset();
+});
 
 // ==================== parseFrontmatter ====================
 
@@ -149,6 +159,34 @@ test('extractDescription: strips markdown heading markers', () => {
 test('extractDescription: returns empty string for empty content', () => {
   expect(extractDescription('')).toBe('');
   expect(extractDescription('\n\n\n')).toBe('');
+});
+
+test('getSkillScriptRuntimeCandidates delegates to shared node runtime resolution', () => {
+  nodeRuntimeMocks.resolveNodeRuntimeForSpawn.mockReturnValue({
+    command: 'C:\\Program Files\\nodejs\\node.exe',
+    args: [],
+    env: {},
+  });
+
+  expect(getSkillScriptRuntimeCandidates({ PATH: 'ignored' })).toEqual([{
+    command: 'C:\\Program Files\\nodejs\\node.exe',
+    args: [],
+    extraEnv: undefined,
+  }]);
+});
+
+test('getSkillScriptRuntimeCandidates preserves Electron-as-node fallback env', () => {
+  nodeRuntimeMocks.resolveNodeRuntimeForSpawn.mockReturnValue({
+    command: 'C:\\LobsterAI\\LobsterAI.exe',
+    args: [],
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+  });
+
+  expect(getSkillScriptRuntimeCandidates({ PATH: 'ignored' })).toEqual([{
+    command: 'C:\\LobsterAI\\LobsterAI.exe',
+    args: [],
+    extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
+  }]);
 });
 
 // ==================== Integration: real-world SKILL.md patterns ====================

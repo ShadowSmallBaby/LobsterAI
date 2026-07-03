@@ -3,9 +3,10 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import {
   dedupeArtifactsForDisplay,
   dedupeArtifactsWithinMessages,
+  getLocalServicePortIdentityKey,
   normalizeFilePathForDedup,
-  normalizeLocalServiceUrlForDedup,
   resolveArtifactIdForDisplay,
+  shouldPreferArtifactForDisplay,
 } from '../../services/artifactParser';
 import { type Artifact, ArtifactTypeValue } from '../../types/artifact';
 import type { RootState } from '../index';
@@ -23,6 +24,7 @@ export type ArtifactContentView = typeof ArtifactContentView[keyof typeof Artifa
 export const ArtifactSpecialTab = {
   FileList: 'fileList',
   Browser: 'browser',
+  Subagents: 'subagents',
 } as const;
 export type ArtifactSpecialTab = typeof ArtifactSpecialTab[keyof typeof ArtifactSpecialTab];
 
@@ -33,6 +35,12 @@ export interface ArtifactPreviewTab {
   artifactId: string;
   contentView: ArtifactContentView;
   openedAt: number;
+}
+
+interface AddArtifactPayload {
+  sessionId: string;
+  artifact: Artifact;
+  defaultProjectDirectory?: string;
 }
 
 interface ArtifactState {
@@ -160,8 +168,8 @@ const artifactSlice = createSlice({
       }
     },
 
-    addArtifact(state, action: PayloadAction<{ sessionId: string; artifact: Artifact }>) {
-      const { sessionId, artifact } = action.payload;
+    addArtifact(state, action: PayloadAction<AddArtifactPayload>) {
+      const { sessionId, artifact, defaultProjectDirectory } = action.payload;
       if (!state.artifactsBySession[sessionId]) {
         state.artifactsBySession[sessionId] = [];
       }
@@ -173,16 +181,18 @@ const artifactSlice = createSlice({
         }
       } else {
         if (artifact.type === ArtifactTypeValue.LocalService) {
-          const normalizedUrl = normalizeLocalServiceUrlForDedup(artifact.url || artifact.content);
+          const localServicePortKey = getLocalServicePortIdentityKey(artifact.url || artifact.content);
           const dupIndex = state.artifactsBySession[sessionId].findIndex(
             a => isSameMessageArtifact(a, artifact) &&
               a.type === ArtifactTypeValue.LocalService &&
-              normalizeLocalServiceUrlForDedup(a.url || a.content) === normalizedUrl
+              getLocalServicePortIdentityKey(a.url || a.content) === localServicePortKey
           );
           if (dupIndex >= 0) {
             const old = state.artifactsBySession[sessionId][dupIndex];
-            state.artifactsBySession[sessionId][dupIndex] = artifact;
-            replacePreviewTabArtifactId(state, sessionId, old.id, artifact.id);
+            if (shouldPreferArtifactForDisplay(artifact, old, { defaultProjectDirectory })) {
+              state.artifactsBySession[sessionId][dupIndex] = artifact;
+              replacePreviewTabArtifactId(state, sessionId, old.id, artifact.id);
+            }
             return;
           }
         }
@@ -213,7 +223,9 @@ const artifactSlice = createSlice({
               a.content === artifact.remoteUrl
           );
           if (dupIndex >= 0) {
+            const old = state.artifactsBySession[sessionId][dupIndex];
             state.artifactsBySession[sessionId][dupIndex] = artifact;
+            replacePreviewTabArtifactId(state, sessionId, old.id, artifact.id);
             return;
           }
         }
@@ -271,6 +283,11 @@ const artifactSlice = createSlice({
     },
 
     activateArtifactBrowserTab(state, action: PayloadAction<{ sessionId: string }>) {
+      activatePreviewTab(state, action.payload.sessionId, null);
+      setPanelOpen(state, action.payload.sessionId, true);
+    },
+
+    activateArtifactSubagentTab(state, action: PayloadAction<{ sessionId: string }>) {
       activatePreviewTab(state, action.payload.sessionId, null);
       setPanelOpen(state, action.payload.sessionId, true);
     },
@@ -340,6 +357,7 @@ export const {
   selectArtifact,
   openArtifactPreviewTab,
   activateArtifactBrowserTab,
+  activateArtifactSubagentTab,
   activateArtifactPreviewTab,
   activateArtifactFileListTab,
   closeArtifactPreviewTab,

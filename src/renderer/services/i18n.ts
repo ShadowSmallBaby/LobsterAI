@@ -48,6 +48,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     dark: '深色',
     system: '跟随系统',
     themeColor: '主题色',
+    uiFontSize: 'UI 字号',
+    uiFontSizeDescription: '调整 LobsterAI 界面使用的基准字号',
+    codeFontSize: '代码字体大小',
+    codeFontSizeDescription: '调整聊天和代码视图中代码使用的基准字号',
     'theme-name-classic-light': '经典浅色',
     'theme-name-classic-dark': '经典深色',
     'theme-name-dawn': '晨光蓝白',
@@ -505,12 +509,75 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '分享功能需要有效订阅。开通后即可生成分享链接，并可选择分享码或公开访问。',
     htmlShareOpenSubscription: '去订阅',
     htmlShareUnavailableInProduction: '分享功能暂不可用。',
+    nodeDeploymentShare: '分享',
+    nodeDeploymentPreparing: '正在准备...',
+    nodeDeploymentPreparingMessage: '正在准备服务部署。',
+    nodeDeploymentStatusQueued: '等待部署',
+    nodeDeploymentStatusDeploying: '正在创建服务',
+    nodeDeploymentStatusLive: '可访问',
+    nodeDeploymentStatusFailed: '部署失败',
+    nodeDeploymentStatusExpired: '已过期',
+    nodeDeploymentStatusStopped: '已停止',
+    nodeDeploymentStatusUnknown: '未知状态',
+    nodeDeploymentProgressPrepare: '准备',
+    nodeDeploymentProgressCheck: '检查',
+    nodeDeploymentProgressUpload: '上传',
+    nodeDeploymentProgressDeploy: '部署',
+    nodeDeploymentProgressComplete: '完成',
+    nodeDeploymentStatusQueuedMessage: '部署任务已提交，正在等待处理。',
+    nodeDeploymentStatusDeployingMessage: '正在创建服务，完成后会生成可访问链接。',
+    nodeDeploymentStatusLiveMessage: '服务已创建，可复制链接访问。',
+    nodeDeploymentStatusFailedMessage: '服务创建失败。',
+    nodeDeploymentStatusExpiredMessage: '该服务分享已过期。',
+    nodeDeploymentStatusStoppedMessage: '该服务分享已停止。',
+    nodeDeploymentStatusTitle: '服务部署状态',
+    nodeDeploymentConfirmTitle: '确认部署服务',
+    nodeDeploymentConfirmMessage: '已自动填写部署信息，请确认项目目录和启动方式。',
+    nodeDeploymentPreparingTitle: '准备部署服务',
+    nodeDeploymentCheckingExisting: '正在检查已有部署。',
+    nodeDeploymentAnalyzingProject: '正在检测项目目录。',
+    nodeDeploymentFailedTitle: '服务部署失败',
+    nodeDeploymentFailedMessage: '服务部署请求失败。',
+    nodeDeploymentAnalyzeFailed: '项目目录检测失败。',
+    nodeDeploymentLocalServiceUnavailableTitle: '当前服务不可用',
+    nodeDeploymentLocalServiceUnavailableMessage: '无法访问当前本地服务，请先确认开发服务器仍在运行后再分享。',
+    nodeDeploymentInvalidPort: '请输入有效端口。',
+    nodeDeploymentUploadingPackage: '正在构建并上传服务包。',
+    nodeDeploymentLocalService: '本地服务',
+    nodeDeploymentProjectDirectory: '项目目录',
+    nodeDeploymentProjectDirectoryPlaceholder: '选择包含 package.json 的项目目录',
+    nodeDeploymentChooseDirectory: '选择',
+    nodeDeploymentAnalyzing: '检测中...',
+    nodeDeploymentAnalyzeAction: '刷新配置',
+    nodeDeploymentNodeVersion: 'Node 版本',
+    nodeDeploymentPort: '监听端口',
+    nodeDeploymentAdvancedSettings: '高级配置',
+    nodeDeploymentInstallCommand: '安装命令',
+    nodeDeploymentBuildCommand: '构建命令',
+    nodeDeploymentStartCommand: '启动命令',
+    nodeDeploymentPackageSummary: '构建前预估',
+    nodeDeploymentPackageSummaryValue: '{files} 个文件，约 {size}',
+    nodeDeploymentCurrentStatus: '当前状态',
+    nodeDeploymentUpdateFile: '更新文件',
+    nodeDeploymentAccessModeUpdateComplete: '访问方式已更新。',
+    nodeDeploymentShareDisabledMessage: '服务分享已关闭，访问者无法通过链接访问。',
+    nodeDeploymentShareEnabledMessage: '服务分享已开启，可复制链接访问。',
+    nodeDeploymentRedeployAndShare: '重新部署并开启',
+    nodeDeploymentExpiresAt: '默认有效期至 {time}',
+    nodeDeploymentSubmitting: '正在提交...',
+    nodeDeploymentSubmit: '提交部署',
+    nodeDeploymentRetry: '重新部署',
     artifactShareSourceUnavailable: '当前预览没有可分享的文件或内容。',
     artifactShareSvgRejected: 'SVG 包含不安全内容，无法分享。',
     artifactCloseTab: '关闭标签页',
     artifactAddTab: '添加标签页',
     artifactOpenFileTab: '打开文件',
     artifactBrowserTab: '浏览器',
+    subagentPanelTitle: '子智能体',
+    subagentPanelEmpty: '当前会话暂无子智能体',
+    subagentPanelRunning: '已开启',
+    subagentPanelCompleted: '完成',
+    subagentPanelFailed: '异常',
     artifactBrowserBack: '后退',
     artifactBrowserForward: '前进',
     artifactBrowserReload: '刷新',
@@ -645,6 +712,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     networkError: '网络错误',
     apiKeyRequired: '需要设置API密钥',
     configureApiKey: '请在设置中配置您的API密钥',
+    enableRequiresApiKey: '开启前请先输入 API Key',
+    enableRequiresLogin: '开启前请先完成登录',
 
     // 初始化
     initializationError: '初始化应用程序失败。请检查您的配置。',
@@ -744,6 +813,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     engineStartingTip5: '对 AI 说"记住……"，重要信息会写入长期记忆，下次对话自动生效',
     engineStartingTip6: 'AI 执行敏感操作前会先请求你的确认，可以放心交给它',
     coworkOpenClawError: 'OpenClaw 网关未能在规定时间内启动成功。',
+    coworkOpenClawQuickRepair: '一键修复',
+    coworkOpenClawErrorRepairHint:
+      '推荐使用一键修复：自动备份并重建 OpenClaw 配置后重新启动网关，可解决大多数启动失败问题；不会删除聊天记录、模型配置、技能或工作区文件。',
+    coworkOpenClawErrorShort: '网关启动失败',
+    coworkOpenClawErrorDefer: '稍后处理',
     openClawMaintenanceTitle: '运行维护',
     openClawRepairGatewayStateTitle: '修复启动问题',
     openClawRepairGatewayStateDesc: '备份并重建 OpenClaw 配置，然后重新启动网关。',
@@ -1201,6 +1275,21 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkPreparingEnvironment: '准备环境中，请稍候',
     coworkAddFile: '添加文件',
     coworkPlanMode: '计划模式',
+    coworkGoal: '目标',
+    coworkGoalEdit: '编辑目标',
+    coworkGoalPause: '暂停目标',
+    coworkGoalResume: '继续目标',
+    coworkGoalClear: '清除目标',
+    coworkGoalInputPlaceholder: 'LobsterAI 应继续朝哪个目标努力？',
+    coworkGoalClearInputMode: '退出目标输入',
+    coworkGoalSetAsGoal: '设为目标',
+    coworkGoalCompletedIn: '已在 {duration} 内达成目标',
+    coworkGoalStatusActive: '进行中',
+    coworkGoalStatusPaused: '已暂停',
+    coworkGoalStatusBlocked: '已阻塞',
+    coworkGoalStatusUsageLimited: '额度受限',
+    coworkGoalStatusBudgetLimited: '预算用尽',
+    coworkGoalStatusComplete: '已完成',
     coworkClearPlanMode: '关闭计划模式',
     coworkProposedPlanTitle: '计划',
     coworkProposedPlanDownload: '下载计划',
@@ -1245,6 +1334,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkExportImageInProgress: '正在导出图片...',
     coworkExportImageSuccess: '图片导出成功',
     coworkExportImageFailed: '导出图片失败',
+    coworkExportDiagnostics: '诊断包',
+    coworkExportDiagnosticsDesc: '包含原始会话数据，用于问题排查',
+    coworkExportDiagnosticsSuccess: '诊断包导出成功',
+    coworkExportDiagnosticsFailed: '导出诊断包失败',
     coworkExportAs: '导出为',
     coworkExportImage: '图片',
     coworkExportImageDesc: '保存为 PNG 截图',
@@ -1602,16 +1695,24 @@ const translations: Record<LanguageType, Record<string, string>> = {
     saveMcpServer: '保存',
     // MCP 市场 & 注册表
     mcpInstalled: '已安装',
+    mcpAuthorized: '已授权',
     mcpMarketplace: '市场',
     mcpCustom: '自定义',
     mcpCustomDescription: '手动配置 MCP 服务器',
     mcpResetForm: '重置',
     mcpInstall: '安装',
+    mcpUninstall: '卸载',
+    mcpRegistryDeleteConfirm: '确定卸载"{name}"并删除其所有 MCP 服务吗？',
+    mcpServersCount: '{count} 个服务',
     mcpInstallFromUrl: '通过 URL 安装',
     mcpInstallFromUrlTitle: '通过 URL 安装 MCP',
     mcpInstallFromUrlPlaceholder: '输入 npm 包名或 URL',
     mcpInstallFromUrlHint:
       '支持 npm 包名（如 @modelcontextprotocol/server-filesystem）、npx 命令或 HTTP/HTTPS URL',
+    mcpQichachaConnect: '登录授权',
+    mcpQichachaReconnect: '重新授权',
+    mcpQichachaConnecting: '授权中...',
+    mcpQichachaConnectFailed: '企查查 MCP 授权失败',
     mcpRequiredConfig: '必填配置',
     mcpEnvRequired: '此字段为必填项',
     mcpOptionalConfig: '可选配置',
@@ -1638,6 +1739,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     mcpDesc_canva: 'Canva 设计平台：创建和管理设计、模板操作',
     mcpDesc_firecrawl: '网页抓取与数据提取：支持批处理、结构化提取和内容分析',
     mcpDesc_fetch: '网页内容抓取和 HTML 转 Markdown，适合 LLM 消费',
+    mcpDesc_qichacha: '通过企查查账号授权，自动配置企业工商、风险、知识产权、经营、人员和历史存档 MCP 服务',
 
     // 邮箱技能配置
     emailTab: '邮箱',
@@ -2577,6 +2679,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     dark: 'Dark',
     system: 'System',
     themeColor: 'Color Themes',
+    uiFontSize: 'UI font size',
+    uiFontSizeDescription: 'Adjust the base size used for the LobsterAI UI',
+    codeFontSize: 'Code font size',
+    codeFontSizeDescription: 'Adjust the base size used for code in chats and code views',
     'theme-name-classic-light': 'Classic Light',
     'theme-name-classic-dark': 'Classic Dark',
     'theme-name-dawn': 'Dawn',
@@ -3073,12 +3179,76 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Sharing requires an active subscription. After subscribing, you can create links with share-code or public access.',
     htmlShareOpenSubscription: 'View subscription',
     htmlShareUnavailableInProduction: 'Sharing is currently unavailable.',
+    nodeDeploymentShare: 'Share',
+    nodeDeploymentPreparing: 'Preparing...',
+    nodeDeploymentPreparingMessage: 'Preparing the service deployment.',
+    nodeDeploymentStatusQueued: 'Queued',
+    nodeDeploymentStatusDeploying: 'Creating service',
+    nodeDeploymentStatusLive: 'Available',
+    nodeDeploymentStatusFailed: 'Failed',
+    nodeDeploymentStatusExpired: 'Expired',
+    nodeDeploymentStatusStopped: 'Stopped',
+    nodeDeploymentStatusUnknown: 'Unknown',
+    nodeDeploymentProgressPrepare: 'Prepare',
+    nodeDeploymentProgressCheck: 'Check',
+    nodeDeploymentProgressUpload: 'Upload',
+    nodeDeploymentProgressDeploy: 'Deploy',
+    nodeDeploymentProgressComplete: 'Complete',
+    nodeDeploymentStatusQueuedMessage: 'The deployment task has been submitted and is waiting to run.',
+    nodeDeploymentStatusDeployingMessage: 'Creating the service. A share link will be available when it finishes.',
+    nodeDeploymentStatusLiveMessage: 'The service is ready. Copy the link to visit it.',
+    nodeDeploymentStatusFailedMessage: 'The service could not be created.',
+    nodeDeploymentStatusExpiredMessage: 'This service share has expired.',
+    nodeDeploymentStatusStoppedMessage: 'This service share has been stopped.',
+    nodeDeploymentStatusTitle: 'Service deployment status',
+    nodeDeploymentConfirmTitle: 'Confirm service deployment',
+    nodeDeploymentConfirmMessage: 'Deployment details were filled automatically. Confirm the project directory and startup settings.',
+    nodeDeploymentPreparingTitle: 'Prepare service deployment',
+    nodeDeploymentCheckingExisting: 'Checking for an existing deployment.',
+    nodeDeploymentAnalyzingProject: 'Checking the project directory.',
+    nodeDeploymentFailedTitle: 'Service deployment failed',
+    nodeDeploymentFailedMessage: 'The service deployment request failed.',
+    nodeDeploymentAnalyzeFailed: 'Failed to check the project directory.',
+    nodeDeploymentLocalServiceUnavailableTitle: 'Local service unavailable',
+    nodeDeploymentLocalServiceUnavailableMessage:
+      'The current local service cannot be reached. Start or restart the dev server, then try sharing again.',
+    nodeDeploymentInvalidPort: 'Enter a valid port.',
+    nodeDeploymentUploadingPackage: 'Building and uploading the service package.',
+    nodeDeploymentLocalService: 'Local service',
+    nodeDeploymentProjectDirectory: 'Project directory',
+    nodeDeploymentProjectDirectoryPlaceholder: 'Choose a project directory containing package.json',
+    nodeDeploymentChooseDirectory: 'Choose',
+    nodeDeploymentAnalyzing: 'Checking...',
+    nodeDeploymentAnalyzeAction: 'Refresh config',
+    nodeDeploymentNodeVersion: 'Node version',
+    nodeDeploymentPort: 'Listen port',
+    nodeDeploymentAdvancedSettings: 'Advanced settings',
+    nodeDeploymentInstallCommand: 'Install command',
+    nodeDeploymentBuildCommand: 'Build command',
+    nodeDeploymentStartCommand: 'Start command',
+    nodeDeploymentPackageSummary: 'Pre-build estimate',
+    nodeDeploymentPackageSummaryValue: '{files} files, about {size}',
+    nodeDeploymentCurrentStatus: 'Current status',
+    nodeDeploymentUpdateFile: 'Update files',
+    nodeDeploymentAccessModeUpdateComplete: 'Access mode updated.',
+    nodeDeploymentShareDisabledMessage: 'Service sharing is closed. Viewers cannot access it through the link.',
+    nodeDeploymentShareEnabledMessage: 'Service sharing is open. Copy the link to visit it.',
+    nodeDeploymentRedeployAndShare: 'Redeploy and open',
+    nodeDeploymentExpiresAt: 'Default expiration: {time}',
+    nodeDeploymentSubmitting: 'Submitting...',
+    nodeDeploymentSubmit: 'Submit deployment',
+    nodeDeploymentRetry: 'Redeploy',
     artifactShareSourceUnavailable: 'The current preview has no shareable file or content.',
     artifactShareSvgRejected: 'The SVG contains unsafe content and cannot be shared.',
     artifactCloseTab: 'Close tab',
     artifactAddTab: 'Add tab',
     artifactOpenFileTab: 'Open file',
     artifactBrowserTab: 'Browser',
+    subagentPanelTitle: 'Subagents',
+    subagentPanelEmpty: 'No subagents in this session',
+    subagentPanelRunning: 'Running',
+    subagentPanelCompleted: 'Completed',
+    subagentPanelFailed: 'Issues',
     artifactBrowserBack: 'Back',
     artifactBrowserForward: 'Forward',
     artifactBrowserReload: 'Reload',
@@ -3213,6 +3383,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     networkError: 'Network error',
     apiKeyRequired: 'API Key Required',
     configureApiKey: 'Please configure your API key in settings',
+    enableRequiresApiKey: 'Enter an API key before enabling this provider',
+    enableRequiresLogin: 'Sign in before enabling this provider',
 
     // Initialization
     initializationError: 'Failed to initialize application. Please check your configuration.',
@@ -3316,6 +3488,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     engineStartingTip5: 'Tell AI to "remember..." and it saves key facts to long-term memory for future chats',
     engineStartingTip6: 'AI asks for your approval before sensitive operations, so you stay in control',
     coworkOpenClawError: 'OpenClaw gateway failed to become healthy in time.',
+    coworkOpenClawQuickRepair: 'Quick Repair',
+    coworkOpenClawErrorRepairHint:
+      'Quick Repair backs up and rebuilds the OpenClaw config, then restarts the gateway. It resolves most startup failures and keeps chats, model settings, skills, and workspace files.',
+    coworkOpenClawErrorShort: 'Gateway failed to start',
+    coworkOpenClawErrorDefer: 'Later',
     openClawMaintenanceTitle: 'Run Maintenance',
     openClawRepairGatewayStateTitle: 'Repair Startup',
     openClawRepairGatewayStateDesc: 'Back up and rebuild the OpenClaw config, then restart the gateway.',
@@ -3803,6 +3980,21 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkPreparingEnvironment: 'Preparing environment, please wait',
     coworkAddFile: 'Add File',
     coworkPlanMode: 'Plan Mode',
+    coworkGoal: 'Goal',
+    coworkGoalEdit: 'Edit goal',
+    coworkGoalPause: 'Pause goal',
+    coworkGoalResume: 'Resume goal',
+    coworkGoalClear: 'Clear goal',
+    coworkGoalInputPlaceholder: 'What goal should LobsterAI keep working toward?',
+    coworkGoalClearInputMode: 'Exit goal input',
+    coworkGoalSetAsGoal: 'Set as goal',
+    coworkGoalCompletedIn: 'Goal achieved in {duration}',
+    coworkGoalStatusActive: 'Pursuing',
+    coworkGoalStatusPaused: 'Paused',
+    coworkGoalStatusBlocked: 'Blocked',
+    coworkGoalStatusUsageLimited: 'Usage limited',
+    coworkGoalStatusBudgetLimited: 'Budget used',
+    coworkGoalStatusComplete: 'Complete',
     coworkClearPlanMode: 'Turn off Plan Mode',
     coworkProposedPlanTitle: 'Plan',
     coworkProposedPlanDownload: 'Download plan',
@@ -3847,6 +4039,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkExportImageInProgress: 'Exporting image...',
     coworkExportImageSuccess: 'Image exported successfully',
     coworkExportImageFailed: 'Failed to export image',
+    coworkExportDiagnostics: 'Diagnostics package',
+    coworkExportDiagnosticsDesc: 'Raw session data for troubleshooting',
+    coworkExportDiagnosticsSuccess: 'Diagnostics package exported',
+    coworkExportDiagnosticsFailed: 'Failed to export diagnostics package',
     coworkExportAs: 'Export as',
     coworkExportImage: 'Image',
     coworkExportImageDesc: 'Save as PNG screenshot',
@@ -4223,16 +4419,24 @@ const translations: Record<LanguageType, Record<string, string>> = {
     saveMcpServer: 'Save',
     // MCP Marketplace & Registry
     mcpInstalled: 'Installed',
+    mcpAuthorized: 'Authorized',
     mcpMarketplace: 'Marketplace',
     mcpCustom: 'Custom',
     mcpCustomDescription: 'Manually configure an MCP server',
     mcpResetForm: 'Reset',
     mcpInstall: 'Install',
+    mcpUninstall: 'Uninstall',
+    mcpRegistryDeleteConfirm: 'Uninstall "{name}" and delete all of its MCP servers?',
+    mcpServersCount: '{count} servers',
     mcpInstallFromUrl: 'Install from URL',
     mcpInstallFromUrlTitle: 'Install MCP from URL',
     mcpInstallFromUrlPlaceholder: 'Enter npm package name or URL',
     mcpInstallFromUrlHint:
       'Supports npm package names (e.g. @modelcontextprotocol/server-filesystem), npx commands, or HTTP/HTTPS URLs',
+    mcpQichachaConnect: 'Sign in',
+    mcpQichachaReconnect: 'Reconnect',
+    mcpQichachaConnecting: 'Connecting...',
+    mcpQichachaConnectFailed: 'Failed to authorize Qichacha MCP',
     mcpRequiredConfig: 'Required Configuration',
     mcpEnvRequired: 'This field is required',
     mcpOptionalConfig: 'Optional Configuration',
@@ -4261,6 +4465,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     mcpDesc_firecrawl:
       'Web scraping and data extraction: batch processing, structured extraction and content analysis',
     mcpDesc_fetch: 'Web content fetching and HTML-to-markdown conversion for LLM consumption',
+    mcpDesc_qichacha:
+      'Authorize with a Qichacha account to configure company, risk, IP, operation, executive and history MCP servers automatically',
 
     // Email Skill Config
     emailTab: 'Email',
@@ -5198,13 +5404,28 @@ const translations: Record<LanguageType, Record<string, string>> = {
   },
 };
 
+// localStorage key read by index.html's pre-React splash to localize its title
+const LANGUAGE_HINT_STORAGE_KEY = 'lobster-language';
+
+// 初始化完成前的语言：优先上次启动持久化的提示，其次系统语言（与 splash 的推断逻辑一致）
+const readLanguageHint = (): LanguageType => {
+  try {
+    const hint = localStorage.getItem(LANGUAGE_HINT_STORAGE_KEY);
+    if (hint === 'zh' || hint === 'en') {
+      return hint;
+    }
+    return navigator.language === 'zh-CN' ? 'zh' : 'en';
+  } catch {
+    return 'zh';
+  }
+};
+
 class I18nService {
   private currentLanguage: LanguageType = 'zh';
   private listeners = new Set<() => void>();
 
   constructor() {
-    // 默认使用中文
-    this.currentLanguage = 'zh';
+    this.currentLanguage = readLanguageHint();
   }
 
   // 初始化语言设置
@@ -5271,6 +5492,14 @@ class I18nService {
       // 默认使用英文
       this.currentLanguage = 'en';
     }
+    this.persistLanguageHint(this.currentLanguage);
+  }
+
+  // 持久化语言提示，供 index.html 的启动屏在下次启动时读取
+  private persistLanguageHint(language: LanguageType): void {
+    try {
+      localStorage.setItem(LANGUAGE_HINT_STORAGE_KEY, language);
+    } catch { /* storage unavailable */ }
   }
 
   // 根据系统语言推断应用语言
@@ -5295,6 +5524,8 @@ class I18nService {
     if (!persist) {
       return;
     }
+
+    this.persistLanguageHint(language);
 
     // 更新配置
     try {
