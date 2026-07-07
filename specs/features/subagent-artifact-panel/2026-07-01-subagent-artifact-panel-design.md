@@ -168,7 +168,7 @@ OpenClaw 侧仍是运行时和子会话数据来源；LobsterAI 侧维护的 `su
 - `src/renderer/components/agentSidebar/MyAgentSidebarTree.tsx`
 - `src/renderer/components/Sidebar.tsx`
 - `src/renderer/services/i18n.ts`
-- `src/main/libs/agentEngine/subagentTracker.ts`
+- `src/main/libs/agentEngine/subagent/tracker.ts`
 - `src/main/libs/agentEngine/openclawRuntimeAdapter.ts`
 - `src/main/subagentRunStore.ts`
 - `src/main/subagentMessageStore.ts`

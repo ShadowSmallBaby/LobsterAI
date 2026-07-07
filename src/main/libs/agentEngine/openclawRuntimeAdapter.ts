@@ -104,10 +104,23 @@ import {
   shouldReplaceLocalConversationWithCronHistory,
 } from './openclawCronRunHistorySync';
 import {
-  type SubagentChildSessionCandidateParams,
-  type SubagentChildSessionMaterializeParams,
+  buildSubagentChildHistorySyncPlan,
+} from './subagent/childHistorySync';
+import {
+  collectBackfillableHistoryToolEntries,
+  getHistoryToolCallId,
+  getHistoryToolName,
+  isHistoryToolResultRole,
+} from './subagent/historyBackfill';
+import {
+  isSubagentSessionKey,
+} from './subagent/sessionKeys';
+import {
+  SubagentSessionMaterializer,
+} from './subagent/sessionMaterializer';
+import {
   SubagentTracker,
-} from './subagentTracker';
+} from './subagent/tracker';
 import type {
   CoworkContextUsage,
   CoworkContinueOptions,
@@ -1533,264 +1546,6 @@ const extractSentFilePathsFromHistory = (messages: unknown[]): string[] => {
   return filePaths;
 };
 
-type BackfillableHistoryToolEntry = {
-  toolCallId: string;
-  toolName: string;
-  args: Record<string, unknown>;
-  resultText: string;
-  resultTimestamp?: number;
-  resultIsError: boolean;
-  order: number;
-};
-
-const BACKFILLABLE_HISTORY_TOOL_NAMES = new Set([
-  'agents_list',
-  'sessions_read',
-  'sessions_resume',
-  'sessions_spawn',
-  'sessions_yield',
-]);
-
-const getHistoryToolCallId = (value: Record<string, unknown>): string => {
-  const candidates = [
-    value.id,
-    value.toolCallId,
-    value.tool_call_id,
-    value.toolUseId,
-    value.tool_use_id,
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim()) {
-      return candidate.trim();
-    }
-  }
-  return '';
-};
-
-const getHistoryToolName = (value: Record<string, unknown>): string => {
-  const candidates = [value.name, value.toolName, value.tool_name];
-  for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim()) {
-      return candidate.trim();
-    }
-  }
-  return '';
-};
-
-const getHistoryToolArguments = (value: Record<string, unknown>): Record<string, unknown> => {
-  const candidates = [value.arguments, value.args, value.input];
-  for (const candidate of candidates) {
-    if (isRecord(candidate)) {
-      return candidate;
-    }
-    if (typeof candidate === 'string' && candidate.trim()) {
-      try {
-        const parsed = JSON.parse(candidate);
-        if (isRecord(parsed)) {
-          return parsed;
-        }
-      } catch { /* ignore malformed historical tool arguments */ }
-    }
-  }
-  return {};
-};
-
-const getHistoryMessageTimestamp = (message: Record<string, unknown>): number | undefined => {
-  const candidates = [message.timestamp, message.createdAt, message.created_at];
-  for (const candidate of candidates) {
-    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
-      return candidate;
-    }
-    if (typeof candidate === 'string' && candidate.trim()) {
-      const parsed = Date.parse(candidate);
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
-    }
-  }
-  return undefined;
-};
-
-const isBackfillableHistoryToolName = (toolName: string): boolean => (
-  BACKFILLABLE_HISTORY_TOOL_NAMES.has(toolName.trim().toLowerCase())
-);
-
-const isHistoryToolCallBlock = (value: Record<string, unknown>): boolean => {
-  const blockType = typeof value.type === 'string' ? value.type.trim() : '';
-  return blockType === 'toolCall' || blockType === 'tool_use' || blockType === 'tool_call';
-};
-
-const isHistoryToolResultRole = (role: string): boolean => {
-  const normalized = role.trim().toLowerCase();
-  return normalized === 'tool'
-    || normalized === 'toolresult'
-    || normalized === 'tool_result';
-};
-
-const getHistoryToolResultIsError = (message: Record<string, unknown>): boolean => (
-  Boolean(message.isError)
-  || Boolean(message.is_error)
-  || Boolean(message.error)
-);
-
-const inferSessionsSpawnArgsFromResultText = (resultText: string): Record<string, unknown> | null => {
-  try {
-    const parsed: unknown = JSON.parse(resultText);
-    if (!isRecord(parsed)) return null;
-    const childSessionKey = typeof parsed.childSessionKey === 'string' ? parsed.childSessionKey.trim() : '';
-    if (!childSessionKey) return null;
-    const agentId = parseAgentIdFromSubagentSessionKey(childSessionKey);
-    const args: Record<string, unknown> = {};
-    if (agentId) {
-      args.agentId = agentId;
-    }
-    const taskName = typeof parsed.taskName === 'string' ? parsed.taskName.trim() : '';
-    if (taskName) {
-      args.taskName = taskName;
-    }
-    return args;
-  } catch {
-    return null;
-  }
-};
-
-const collectBackfillableHistoryToolEntries = (messages: unknown[]): BackfillableHistoryToolEntry[] => {
-  let lastUserIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (isRecord(message) && message.role === 'user') {
-      lastUserIdx = i;
-      break;
-    }
-  }
-
-  const startIdx = lastUserIdx >= 0 ? lastUserIdx + 1 : 0;
-  const toolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; order: number }>();
-  const toolResults = new Map<string, {
-    toolName: string;
-    text: string;
-    timestamp?: number;
-    isError: boolean;
-    order: number;
-  }>();
-
-  for (let index = startIdx; index < messages.length; index++) {
-    const message = messages[index];
-    if (!isRecord(message)) continue;
-    const role = typeof message.role === 'string' ? message.role.trim() : '';
-
-    if (role === 'assistant' && Array.isArray(message.content)) {
-      let blockIndex = 0;
-      for (const block of message.content) {
-        blockIndex++;
-        if (!isRecord(block) || !isHistoryToolCallBlock(block)) continue;
-        const toolName = getHistoryToolName(block).trim().toLowerCase();
-        if (!isBackfillableHistoryToolName(toolName)) continue;
-        const toolCallId = getHistoryToolCallId(block);
-        if (!toolCallId || toolCalls.has(toolCallId)) continue;
-        toolCalls.set(toolCallId, {
-          toolName,
-          args: getHistoryToolArguments(block),
-          order: index * 1000 + blockIndex,
-        });
-      }
-      continue;
-    }
-
-    if (!isHistoryToolResultRole(role)) continue;
-    const toolCallId = getHistoryToolCallId(message);
-    if (!toolCallId || toolResults.has(toolCallId)) continue;
-    const text = extractMessageText(message);
-    if (!text.trim()) continue;
-    const toolName = getHistoryToolName(message).trim().toLowerCase();
-    toolResults.set(toolCallId, {
-      toolName,
-      text,
-      timestamp: getHistoryMessageTimestamp(message),
-      isError: getHistoryToolResultIsError(message),
-      order: index * 1000,
-    });
-  }
-
-  const entries: BackfillableHistoryToolEntry[] = [];
-  const consumedResultIds = new Set<string>();
-
-  for (const [toolCallId, call] of toolCalls.entries()) {
-    const result = toolResults.get(toolCallId);
-    if (!result?.text.trim()) continue;
-    consumedResultIds.add(toolCallId);
-    entries.push({
-      toolCallId,
-      toolName: call.toolName,
-      args: call.args,
-      resultText: result.text,
-      resultTimestamp: result.timestamp,
-      resultIsError: result.isError,
-      order: Math.min(call.order, result.order),
-    });
-  }
-
-  for (const [toolCallId, result] of toolResults.entries()) {
-    if (consumedResultIds.has(toolCallId)) continue;
-    const resultToolName = result.toolName;
-    if (isBackfillableHistoryToolName(resultToolName)) {
-      entries.push({
-        toolCallId,
-        toolName: resultToolName,
-        args: {},
-        resultText: result.text,
-        resultTimestamp: result.timestamp,
-        resultIsError: result.isError,
-        order: result.order,
-      });
-      continue;
-    }
-
-    const inferredSpawnArgs = inferSessionsSpawnArgsFromResultText(result.text);
-    if (inferredSpawnArgs) {
-      entries.push({
-        toolCallId,
-        toolName: 'sessions_spawn',
-        args: inferredSpawnArgs,
-        resultText: result.text,
-        resultTimestamp: result.timestamp,
-        resultIsError: result.isError,
-        order: result.order,
-      });
-    }
-  }
-
-  return entries.sort((a, b) => a.order - b.order);
-};
-
-const isSubagentSessionKey = (sessionKey: string): boolean => sessionKey.includes(':subagent:');
-
-const parseAgentIdFromSubagentSessionKey = (sessionKey: string): string | null => {
-  const match = sessionKey.match(/^agent:([^:]+):subagent:/);
-  return match?.[1]?.trim() || null;
-};
-
-const normalizeSubagentVisibleUserText = (text: string): string => {
-  const currentRequestMarker = '[Current user request]';
-  const currentRequestIndex = text.lastIndexOf(currentRequestMarker);
-  if (currentRequestIndex >= 0) {
-    const visible = text.slice(currentRequestIndex + currentRequestMarker.length).trim();
-    if (visible) return visible;
-  }
-
-  const taskMarker = '[Subagent Task]';
-  const taskIndex = text.lastIndexOf(taskMarker);
-  if (taskIndex >= 0) {
-    const taskStart = taskIndex + taskMarker.length;
-    const taskTail = text.slice(taskStart);
-    const beginMatch = /\n\s*Begin\. Execute the assigned task to completion\./.exec(taskTail);
-    const visible = (beginMatch ? taskTail.slice(0, beginMatch.index) : taskTail).trim();
-    if (visible) return visible;
-  }
-
-  return text;
-};
-
 /**
  * Extract and concatenate all assistant text from the current turn in chat.history.
  * The current turn starts after the last user message.
@@ -2424,6 +2179,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   // ── Subagent tracking (delegated) ───────────────────────────────────────
   private readonly subagentTracker: SubagentTracker;
+  private readonly subagentSessionMaterializer: SubagentSessionMaterializer;
   private readonly approvalController: OpenClawApprovalController;
 
   /**
@@ -3486,13 +3242,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       emitPermissionRequest: (sessionId, request) => this.emit('permissionRequest', sessionId, request),
       emitError: (sessionId, error) => this.emit('error', sessionId, error),
     });
+    this.subagentSessionMaterializer = new SubagentSessionMaterializer({
+      store: this.store,
+      rememberSessionKey: (sessionId, sessionKey) => this.rememberSessionKey(sessionId, sessionKey),
+      markSessionHistoryUnsynced: (sessionId) => this.fullySyncedSessions.delete(sessionId),
+      notifySessionsChanged: () => this.notifySessionsChanged(),
+      emitSessionStatus: (sessionId, status) => this.emitSessionStatus(sessionId, status),
+      emitComplete: (sessionId, sessionKey) => this.emit('complete', sessionId, sessionKey),
+      emitError: (sessionId, error) => this.emit('error', sessionId, error),
+      resolveSessionIdBySessionKey: (sessionKey) => this.resolveSessionIdBySessionKey(sessionKey),
+      syncSessionHistory: (sessionId, sessionKey) => this.syncSessionHistoryFromGateway(sessionId, sessionKey),
+    });
     if (subagentRunStore) {
       this.subagentTracker = new SubagentTracker(
         subagentRunStore,
         subagentMessageStore ?? null,
         () => this.gatewayClient,
-        (params) => this.materializeSubagentChildSession(params),
-        (params) => this.shouldMaterializeSubagentChildSession(params),
+        (params) => this.subagentSessionMaterializer.materialize(params),
+        (params) => this.subagentSessionMaterializer.shouldMaterialize(params),
       );
     } else {
       // Fallback: create a no-op tracker (should not happen in production)
@@ -3500,113 +3267,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
-  private materializeSubagentChildSession(params: SubagentChildSessionMaterializeParams): void {
-    if (!params.childSessionKey.trim() || !params.childCoworkSessionId.trim()) return;
-    const title = this.buildSubagentChildSessionTitle(params);
-    try {
-      const status: CoworkSessionStatus = params.status === 'error' ? 'error' : 'running';
-      if (typeof this.store.upsertSubagentChildSession !== 'function') {
-        return;
-      }
-      const session = this.store.upsertSubagentChildSession({
-        id: params.childCoworkSessionId,
-        parentSessionId: params.parentSessionId,
-        childSessionKey: params.childSessionKey,
-        agentId: params.agentId || 'main',
-        title,
-        task: params.task,
-        status,
-        createdAt: params.createdAt,
-      });
-      console.log(
-        '[OpenClawRuntime] materialized subagent child session:',
-        `runId=${params.runId}`,
-        `childSessionId=${session.id}`,
-        `parentSessionId=${params.parentSessionId}`,
-        `childSessionKey=${params.childSessionKey}`,
-        `agentId=${params.agentId}`,
-        `runStatus=${params.status}`,
-        `sessionStatus=${status}`,
-      );
-      this.rememberSessionKey(session.id, params.childSessionKey);
-      this.fullySyncedSessions.delete(session.id);
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) {
-          win.webContents.send('cowork:sessions:changed');
-        }
-      }
-      void this.syncSessionHistoryFromGateway(session.id, params.childSessionKey)
-        .catch((error) => {
-          console.warn('[OpenClawRuntime] subagent child history sync failed:', error);
-        });
-    } catch (error) {
-      console.warn('[OpenClawRuntime] failed to materialize subagent child session:', error);
-    }
+  private normalizeModelRef(modelRef: string): string {
+    const normalized = modelRef.trim();
+    if (!normalized) return normalized;
+    return this.options.normalizeModelRef?.(normalized) ?? normalized;
   }
 
-  private shouldMaterializeSubagentChildSession(params: SubagentChildSessionCandidateParams): boolean {
-    const childAgentId = parseAgentIdFromSubagentSessionKey(params.childSessionKey);
-    if (!childAgentId) return true;
-    const parentSession = this.store.getSession(params.parentSessionId, 0);
-    const parentAgentId = parentSession?.agentId?.trim() || 'main';
-    return childAgentId !== parentAgentId;
-  }
-
-  private buildSubagentChildSessionTitle(params: SubagentChildSessionMaterializeParams): string {
-    const label = params.label?.trim();
-    if (label) return label;
-    const task = params.task?.split(/\r?\n/).map(line => line.trim()).find(Boolean);
-    if (task) return task.length > 80 ? `${task.slice(0, 77)}...` : task;
-    const agent = this.store.getAgent(params.agentId || 'main');
-    return agent?.name?.trim() || params.agentId || 'Subagent';
-  }
-
-  private finalizePassiveSubagentSession(
-    sessionKey: string,
-    status: 'done' | 'error',
-  ): void {
-    const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
-    if (!sessionId) {
-      console.log(
-        '[OpenClawRuntime] passive subagent finalize skipped: no session mapping',
-        `sessionKey=${sessionKey}`,
-        `status=${status}`,
-      );
-      return;
-    }
-
-    const nextStatus: CoworkSessionStatus = status === 'done' ? 'completed' : 'error';
-    const previousStatus = this.store.getSession(sessionId, 0)?.status ?? 'unknown';
-    console.log(
-      '[OpenClawRuntime] passive subagent finalize:',
-      `sessionId=${sessionId}`,
-      `sessionKey=${sessionKey}`,
-      `status=${status}`,
-      `previousSessionStatus=${previousStatus}`,
-      `nextSessionStatus=${nextStatus}`,
-    );
-    this.store.updateSession(sessionId, { status: nextStatus });
-    this.emitSessionStatus(sessionId, nextStatus);
-    if (nextStatus === 'completed') {
-      this.emit('complete', sessionId, sessionKey);
-    } else {
-      this.emit('error', sessionId, 'Subagent session failed.');
-    }
+  private notifySessionsChanged(): void {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) {
         win.webContents.send('cowork:sessions:changed');
       }
     }
-    void this.syncSessionHistoryFromGateway(sessionId, sessionKey)
-      .catch((error) => {
-        console.warn('[OpenClawRuntime] passive subagent final history sync failed:', error);
-      });
-  }
-
-  private normalizeModelRef(modelRef: string): string {
-    const normalized = modelRef.trim();
-    if (!normalized) return normalized;
-    return this.options.normalizeModelRef?.(normalized) ?? normalized;
   }
 
   private resolveAgentDefaultModelRef(session: CoworkSession): string {
@@ -6311,7 +5983,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         sessionKey,
         lifecyclePhase === AgentLifecyclePhase.Error ? 'error' : 'done',
       )) {
-      this.finalizePassiveSubagentSession(
+      this.subagentSessionMaterializer.finalizePassive(
         sessionKey,
         lifecyclePhase === AgentLifecyclePhase.Error ? 'error' : 'done',
       );
@@ -7440,7 +7112,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           sessionKey,
           state === 'final' ? 'done' : 'error',
         )) {
-        this.finalizePassiveSubagentSession(
+        this.subagentSessionMaterializer.finalizePassive(
           sessionKey,
           state === 'final' ? 'done' : 'error',
         );
@@ -7479,7 +7151,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           sessionKey,
           state === 'final' ? 'done' : 'error',
         )) {
-        this.finalizePassiveSubagentSession(
+        this.subagentSessionMaterializer.finalizePassive(
           sessionKey,
           state === 'final' ? 'done' : 'error',
         );
@@ -9072,102 +8744,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const session = this.store.getSession(sessionId);
       if (!session) return;
 
-      let normalizedLocalUserContent = false;
-      const localEntries = session.messages
-        .filter((message) => message.type === 'user' || message.type === 'assistant')
-        .map((message) => {
-          const text = message.type === 'user'
-            ? normalizeSubagentVisibleUserText(message.content)
-            : message.content;
-          if (message.type === 'user' && text !== message.content) {
-            normalizedLocalUserContent = true;
-          }
-          return {
-            role: message.type as 'user' | 'assistant',
-            text,
-            timestamp: message.timestamp,
-            metadata: message.metadata,
-          };
-        })
-        .filter((entry) => entry.text.trim());
-      const localUsers = localEntries.filter((entry) => entry.role === 'user');
-      let localUserIndex = 0;
-      const mergedEntries: ReconciledConversationEntry[] = [];
-
-      for (const entry of extractGatewayHistoryEntries(history.messages)) {
-        if (entry.role === 'user') {
-          const localUser = localUsers[localUserIndex++];
-          if (localUser) {
-            mergedEntries.push(localUser);
-            continue;
-          }
-          const visibleText = normalizeSubagentVisibleUserText(entry.text).trim();
-          if (visibleText && !shouldSuppressHeartbeatText('user', visibleText)) {
-            mergedEntries.push({
-              role: 'user',
-              text: visibleText,
-              ...(entry.timestamp != null && { timestamp: entry.timestamp }),
-            });
-          }
-          continue;
-        }
-
-        if (entry.role !== 'assistant') continue;
-        const text = entry.text.trim();
-        if (!text || shouldSuppressHeartbeatText('assistant', text)) continue;
-        let metadata: Record<string, unknown> | undefined;
-        if (entry.usage || entry.model) {
-          metadata = {};
-          if (entry.usage) {
-            metadata.usage = {
-              ...(entry.usage.input != null && { inputTokens: entry.usage.input }),
-              ...(entry.usage.output != null && { outputTokens: entry.usage.output }),
-            };
-          }
-          if (entry.model) {
-            metadata.model = entry.model;
-          }
-        }
-        mergedEntries.push({
-          role: 'assistant',
-          text,
-          ...(metadata && { metadata }),
-          ...(entry.timestamp != null && { timestamp: entry.timestamp }),
-        });
-      }
-
-      for (; localUserIndex < localUsers.length; localUserIndex += 1) {
-        mergedEntries.push(localUsers[localUserIndex]);
-      }
-
-      if (mergedEntries.length === 0) {
+      const plan = buildSubagentChildHistorySyncPlan(session.messages, history.messages);
+      if (plan.entriesToStore.length === 0) {
         this.channelSyncCursor.set(sessionId, 0);
         return;
       }
 
-      const isInSync = !normalizedLocalUserContent
-        && localEntries.length === mergedEntries.length
-        && localEntries.every((entry, index) =>
-          entry.role === mergedEntries[index].role
-          && entry.text === mergedEntries[index].text
-          && isSameReconciledEntry(entry, mergedEntries[index]),
-        );
-      if (isInSync) {
-        this.channelSyncCursor.set(sessionId, mergedEntries.length);
+      if (!plan.changed) {
+        this.channelSyncCursor.set(sessionId, plan.cursor);
         return;
       }
 
       this.store.replaceConversationMessages(
         sessionId,
-        applyLocalTimestampsToEntries(mergedEntries, localEntries),
+        plan.entriesToStore,
       );
-      this.channelSyncCursor.set(sessionId, mergedEntries.length);
+      this.channelSyncCursor.set(sessionId, plan.cursor);
 
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) {
-          win.webContents.send('cowork:sessions:changed');
-        }
-      }
+      this.notifySessionsChanged();
     } catch (error) {
       console.warn('[SubagentHistorySync] failed - sessionId:', sessionId, 'error:', error);
     }

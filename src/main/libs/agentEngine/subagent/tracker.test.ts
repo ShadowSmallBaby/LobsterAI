@@ -1,9 +1,9 @@
 import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { SubagentMessageStore } from '../../subagentMessageStore';
-import { SubagentRunStore } from '../../subagentRunStore';
-import { type GatewayClientLike, SubagentTracker } from './subagentTracker';
+import { SubagentMessageStore } from '../../../subagentMessageStore';
+import { SubagentRunStore } from '../../../subagentRunStore';
+import { type GatewayClientLike, SubagentTracker } from './tracker';
 
 let db: BetterSqlite3.Database;
 let runStore: SubagentRunStore;

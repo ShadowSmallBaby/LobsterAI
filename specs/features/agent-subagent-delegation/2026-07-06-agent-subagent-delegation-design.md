@@ -231,7 +231,7 @@ Agent 创建页：
 9. `src/renderer/components/agent/AgentSettingsPanel.tsx`
 10. `src/renderer/components/agent/AgentCreateModal.tsx`
 11. `src/renderer/services/i18n.ts`
-12. `src/main/libs/agentEngine/subagentTracker.ts`
+12. `src/main/libs/agentEngine/subagent/tracker.ts`
 13. `src/main/libs/agentEngine/openclawRuntimeAdapter.ts`
 14. `src/main/subagentRunStore.ts`
 15. `src/main/subagentMessageStore.ts`

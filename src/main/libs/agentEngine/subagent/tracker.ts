@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
 
-import type { SubagentMessageStore } from '../../subagentMessageStore';
-import type { SubagentRunStore, SubagentRunWithParent } from '../../subagentRunStore';
+import type { SubagentMessageStore } from '../../../subagentMessageStore';
+import type { SubagentRunStore, SubagentRunWithParent } from '../../../subagentRunStore';
 import {
   extractGatewayMessageText,
   shouldSuppressHeartbeatText,
-} from '../openclawHistory';
+} from '../../openclawHistory';
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -625,7 +625,9 @@ export class SubagentTracker {
     runId: string,
     status: 'done' | 'error',
   ): void {
-    const run = this.store?.getSubagentRun(runId) ?? null;
+    const run = typeof this.store?.getSubagentRun === 'function'
+      ? this.store.getSubagentRun(runId)
+      : null;
     console.log(
       '[SubagentTracker] terminal state:',
       `reason=${reason}`,
