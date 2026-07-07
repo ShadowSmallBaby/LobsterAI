@@ -88,6 +88,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
   const currentSession = useSelector(selectCurrentSession);
   const isStreaming = useSelector(selectIsStreaming);
+  const currentSessionIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    currentSessionIdRef.current = currentSession?.id ?? null;
+  }, [currentSession?.id]);
   const config = useSelector(selectCoworkConfig);
 
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
@@ -362,6 +367,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
       // Immediately show the session detail page with user message
       dispatch(setCurrentSession(tempSession));
+      currentSessionIdRef.current = tempSessionId;
       if (isPlanMode) {
         dispatch(setDraftCollaborationMode({
           draftKey: tempSessionId,
@@ -424,6 +430,17 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       }
       if (!startedSession) {
         return false;
+      }
+      if (currentSessionIdRef.current === tempSessionId) {
+        logCoworkViewModel(`replacing temp session ${tempSessionId} with started session ${startedSession.id}`);
+        dispatch(setCurrentSession(startedSession));
+        dispatch(setStreaming(startedSession.status === 'running'));
+        currentSessionIdRef.current = startedSession.id;
+      } else {
+        logCoworkViewModel(
+          `skipped temp session replacement for ${startedSession.id}; `
+          + `current=${currentSessionIdRef.current ?? 'none'} temp=${tempSessionId}`,
+        );
       }
       if (optimisticGoal !== undefined) {
         const startedGoal = applyOptimisticGoalCommand(prompt, null, startedSession.id, Date.now());

@@ -154,6 +154,19 @@ class CoworkService {
     window.electron?.log?.fromRenderer?.(level, 'CoworkService', message);
   }
 
+  private setCurrentSessionStreaming(sessionId: string, isStreaming: boolean, reason: string): void {
+    const state = store.getState().cowork;
+    const currentSessionId = state.currentSession?.id ?? state.currentSessionId;
+    if (currentSessionId !== sessionId) {
+      this.logDiagnostic(
+        'debug',
+        `ignored streaming=${isStreaming} for non-current session ${sessionId}; current=${currentSessionId ?? 'none'}; reason=${reason}.`,
+      );
+      return;
+    }
+    store.dispatch(setStreaming(isStreaming));
+  }
+
   async init(): Promise<void> {
     if (this.initialized) return;
 
@@ -249,6 +262,7 @@ class CoworkService {
 
     const sessionStatusCleanup = cowork.onStreamSessionStatus?.(({ sessionId, status }) => {
       store.dispatch(updateSessionStatus({ sessionId, status }));
+      this.setCurrentSessionStreaming(sessionId, status === 'running', `stream_status_${status}`);
     });
     if (sessionStatusCleanup) {
       this.streamListenerCleanups.push(sessionStatusCleanup);
@@ -303,6 +317,7 @@ class CoworkService {
     // Complete listener
     const completeCleanup = cowork.onStreamComplete(({ sessionId }) => {
       store.dispatch(updateSessionStatus({ sessionId, status: 'completed' }));
+      this.setCurrentSessionStreaming(sessionId, false, 'stream_complete');
       this.scheduleFinalContextUsageRefresh(sessionId, true);
     });
     this.streamListenerCleanups.push(completeCleanup);
@@ -311,12 +326,14 @@ class CoworkService {
     const errorCleanup = cowork.onStreamError(({ sessionId, error }) => {
       if (this.isStillRunningError(error)) {
         store.dispatch(updateSessionStatus({ sessionId, status: 'running' }));
+        this.setCurrentSessionStreaming(sessionId, true, 'stream_error_still_running');
         window.dispatchEvent(new CustomEvent('app:showToast', {
           detail: i18nService.t('coworkSessionStillRunning'),
         }));
         return;
       }
       store.dispatch(updateSessionStatus({ sessionId, status: 'error' }));
+      this.setCurrentSessionStreaming(sessionId, false, 'stream_error');
       // Surface the error as a visible message so the user knows what happened.
       if (error) {
         const displayError = classifyError(error);
@@ -788,7 +805,7 @@ class CoworkService {
       return false;
     }
 
-    store.dispatch(setStreaming(true));
+    this.setCurrentSessionStreaming(options.sessionId, true, 'continue_session_requested');
     store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'running' }));
 
     const result = await cowork.continueSession({
@@ -806,7 +823,7 @@ class CoworkService {
       selectedTextSnippets: options.selectedTextSnippets,
     });
     if (!result.success) {
-      store.dispatch(setStreaming(false));
+      this.setCurrentSessionStreaming(options.sessionId, false, 'continue_session_failed');
       if (result.engineStatus) {
         this.notifyOpenClawStatus(result.engineStatus);
       }
@@ -954,7 +971,7 @@ class CoworkService {
     );
     const previousStatus = currentSessionBeforeGoalCommand?.status ?? listedSessionBeforeGoalCommand?.status;
     if (mayStartRun) {
-      store.dispatch(setStreaming(true));
+      this.setCurrentSessionStreaming(options.sessionId, true, 'goal_command_requested');
       store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'running' }));
     }
     const result = await cowork.runGoalCommand({
@@ -963,7 +980,7 @@ class CoworkService {
     });
     if (!result.success) {
       if (mayStartRun) {
-        store.dispatch(setStreaming(false));
+        this.setCurrentSessionStreaming(options.sessionId, false, 'goal_command_failed');
         if (previousStatus && previousStatus !== 'running') {
           store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: previousStatus }));
         }
@@ -990,7 +1007,7 @@ class CoworkService {
     this.logDiagnostic('info', `stop requested for session ${sessionId}.`);
     const result = await cowork.stopSession(sessionId);
     if (result.success) {
-      store.dispatch(setStreaming(false));
+      this.setCurrentSessionStreaming(sessionId, false, 'stop_session_completed');
       store.dispatch(updateSessionStatus({ sessionId, status: 'idle' }));
       this.logDiagnostic('info', `stop completed for session ${sessionId}.`);
       return true;
@@ -1085,7 +1102,7 @@ class CoworkService {
       const result = await cowork.forkSession(options);
       if (result.success && result.session) {
         store.dispatch(addSession(result.session));
-        store.dispatch(setStreaming(false));
+        this.setCurrentSessionStreaming(result.session.id, false, 'fork_session_created');
         console.log(`[CoworkFork] renderer received forked session ${result.session.id} successfully`);
         window.dispatchEvent(new CustomEvent('app:showToast', {
           detail: i18nService.t('coworkForkCreated'),
@@ -1200,7 +1217,7 @@ class CoworkService {
         return result.session;
       }
       store.dispatch(setCurrentSession(result.session));
-      store.dispatch(setStreaming(result.session.status === 'running'));
+      this.setCurrentSessionStreaming(sessionId, result.session.status === 'running', 'load_session_completed');
       void this.loadSessionMessageRailIndex(sessionId);
       void cowork.markSessionViewed?.(sessionId).catch((error: unknown) => {
         console.warn('[CoworkService] failed to mark session viewed:', error);
@@ -1341,7 +1358,7 @@ class CoworkService {
       const currentSessionId = store.getState().cowork.currentSessionId;
       if (currentSessionId === sessionId) {
         store.dispatch(setCurrentSession(result.session));
-        store.dispatch(setStreaming(result.session.status === 'running'));
+        this.setCurrentSessionStreaming(sessionId, result.session.status === 'running', 'patch_session_completed');
         void this.refreshContextUsage(sessionId, { notifyCompaction: false });
       }
       return result.session;

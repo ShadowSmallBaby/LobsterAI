@@ -1,4 +1,5 @@
 import {
+  ArrowTurnDownRightIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -363,7 +364,7 @@ interface CoworkPromptInputProps {
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
     collaborationMode?: CoworkCollaborationMode,
   ) => boolean | void | Promise<boolean | void>;
-  onStop?: () => void;
+  onStop?: () => void | Promise<void>;
   isStreaming?: boolean;
   placeholder?: string;
   disabled?: boolean;
@@ -487,6 +488,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const inputSourceOverrideRef = useRef<'template' | null>(null);
     const wasStreamingRef = useRef(isStreaming);
     const autoSubmittingQueuedSteerRef = useRef<string | null>(null);
+    const interruptingQueuedSteerIdRef = useRef<string | null>(null);
+    const suppressQueuedSteerAfterStopRef = useRef(false);
 
   // 暴露方法给父组件
   React.useImperativeHandle(ref, () => ({
@@ -1025,14 +1028,33 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return;
     }
 
-    const nextQueuedSteer = pendingSteers[0];
-    if (!nextQueuedSteer || autoSubmittingQueuedSteerRef.current === nextQueuedSteer.id) {
+    if (suppressQueuedSteerAfterStopRef.current) {
+      suppressQueuedSteerAfterStopRef.current = false;
+      interruptingQueuedSteerIdRef.current = null;
+      console.debug(
+        `[CoworkSteer] skipped queued follow-up after manual stop for session ${sessionId}; `
+        + `queued=${pendingSteers.length}.`,
+      );
+      return;
+    }
+
+    const interruptingQueuedSteerId = interruptingQueuedSteerIdRef.current;
+    const nextQueuedSteer = interruptingQueuedSteerId
+      ? pendingSteers.find(steer => steer.id === interruptingQueuedSteerId) ?? pendingSteers[0]
+      : pendingSteers[0];
+    if (!nextQueuedSteer) {
+      interruptingQueuedSteerIdRef.current = null;
+      return;
+    }
+    if (autoSubmittingQueuedSteerRef.current === nextQueuedSteer.id) {
       return;
     }
 
     autoSubmittingQueuedSteerRef.current = nextQueuedSteer.id;
+    interruptingQueuedSteerIdRef.current = null;
     console.debug(
-      `[CoworkSteer] active turn completed; submitting queued follow-up for session ${sessionId}; `
+      `[CoworkSteer] active turn ${interruptingQueuedSteerId ? 'interrupted' : 'completed'}; `
+      + `submitting queued follow-up for session ${sessionId}; `
       + `id=${nextQueuedSteer.id}; chars=${nextQueuedSteer.text.length}.`,
     );
     void Promise.resolve(onSubmit(
@@ -1819,7 +1841,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ...getPromptCapabilityAnalyticsParams(),
     });
     if (onStop) {
-      onStop();
+      if (pendingSteers.length > 0) {
+        suppressQueuedSteerAfterStopRef.current = true;
+        interruptingQueuedSteerIdRef.current = null;
+      }
+      void Promise.resolve(onStop()).catch((error) => {
+        suppressQueuedSteerAfterStopRef.current = false;
+        console.error('[CoworkSteer] failed to stop active turn from prompt stop button.', error);
+      });
     }
   };
 
@@ -2877,10 +2906,27 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const handleSteerQueuedInput = (steer: CoworkPendingSteer) => {
     if (!sessionId || remoteManaged) return;
+    if (!isStreaming || !onStop) {
+      console.debug(
+        `[CoworkSteer] queued follow-up remains scheduled without interrupting active turn; `
+        + `session=${sessionId}; id=${steer.id}; chars=${steer.text.length}; `
+        + `reason=${!isStreaming ? 'not_streaming' : 'missing_stop_handler'}.`,
+      );
+      return;
+    }
+    interruptingQueuedSteerIdRef.current = steer.id;
     console.debug(
-      `[CoworkSteer] queued follow-up remains scheduled without interrupting active turn; `
+      `[CoworkSteer] interrupting active turn for queued steer follow-up; `
       + `session=${sessionId}; id=${steer.id}; chars=${steer.text.length}.`,
     );
+    void Promise.resolve(onStop()).catch((error) => {
+      interruptingQueuedSteerIdRef.current = null;
+      console.error(
+        `[CoworkSteer] failed to stop active turn for queued steer follow-up; `
+        + `session=${sessionId}; id=${steer.id}.`,
+        error,
+      );
+    });
   };
 
   const renderSteerQueueItem = (steer: CoworkPendingSteer, source: 'pending' | 'rejected') => {
@@ -2900,7 +2946,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       >
         {isRejected
           ? <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-warning" />
-          : <ChevronRightIcon className="h-4 w-4 shrink-0 text-primary" />}
+          : <ArrowTurnDownRightIcon className="h-4 w-4 shrink-0" />}
         <span className={`shrink-0 font-medium ${isRejected ? 'text-warning' : 'text-foreground'}`}>
           {isRejected ? i18nService.t('coworkSteerRejected') : i18nService.t('coworkSteerQueued')}
         </span>
@@ -2908,6 +2954,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           {steer.text}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          {!isRejected && (
+            <button
+              type="button"
+              onClick={() => handleSteerQueuedInput(steer)}
+              disabled={remoteManaged}
+              className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[13px] font-medium text-secondary transition-colors hover:bg-surface hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              title={i18nService.t('coworkSteerInterruptTooltip')}
+              aria-label={i18nService.t('coworkSteerInterruptTooltip')}
+            >
+              <ArrowTurnDownRightIcon className="h-3.5 w-3.5" />
+              <span>{i18nService.t('coworkSteer')}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => handleEditQueuedSteer(steer, source)}
@@ -2917,18 +2976,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           >
             <PencilIcon className="h-3.5 w-3.5" />
           </button>
-          {!isRejected && (
-            <button
-              type="button"
-              onClick={() => handleSteerQueuedInput(steer)}
-              disabled={remoteManaged}
-              className="rounded-md p-1 text-secondary transition-colors hover:bg-surface hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
-              title={i18nService.t('coworkSteerQueueSubmitTooltip')}
-              aria-label={i18nService.t('coworkSteerQueueSubmitTooltip')}
-            >
-              <ChevronRightIcon className="h-3.5 w-3.5" />
-            </button>
-          )}
           <button
             type="button"
             onClick={() => handleDeleteQueuedSteer(steer, source)}
@@ -3048,7 +3095,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       aria-label={i18nService.t('coworkSteerExit')}
     >
       <span className={ACTIVE_CONTEXT_BADGE_ICON_WRAP_CLASS}>
-        <ChevronRightIcon className={ACTIVE_CONTEXT_BADGE_ICON_CLASS} />
+        <ArrowTurnDownRightIcon className={ACTIVE_CONTEXT_BADGE_ICON_CLASS} />
       </span>
       <span className="max-w-[120px] truncate">{i18nService.t('coworkSteer')}</span>
       <XMarkIcon className={ACTIVE_CONTEXT_BADGE_REMOVE_ICON_CLASS} />
