@@ -1,11 +1,13 @@
+import { ChevronLeftIcon, ChevronRightIcon, MinusIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
-import type { CoworkPermissionRequest, CoworkPermissionResult } from '../../types/cowork';
-import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon } from '@heroicons/react/24/outline';
+
 import { i18nService } from '../../services/i18n';
+import type { CoworkPermissionRequest, CoworkPermissionResult } from '../../types/cowork';
 
 interface CoworkQuestionWizardProps {
   permission: CoworkPermissionRequest;
   onRespond: (result: CoworkPermissionResult) => void;
+  onMinimize?: () => void;
 }
 
 type QuestionOption = {
@@ -23,8 +25,9 @@ type QuestionItem = {
 const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   permission,
   onRespond,
+  onMinimize,
 }) => {
-  const toolInput = permission.toolInput ?? {};
+  const toolInput = useMemo(() => permission.toolInput ?? {}, [permission.toolInput]);
 
   const questions = useMemo<QuestionItem[]>(() => {
     if (permission.toolName !== 'AskUserQuestion') return [];
@@ -248,10 +251,23 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
               {i18nService.t('coworkQuestionWizardTitle')}
             </h2>
           </div>
+          {onMinimize && (
+            <button
+              type="button"
+              onClick={onMinimize}
+              className="p-2 rounded-lg hover:bg-surface-raised text-secondary transition-colors"
+              aria-label={i18nService.t('coworkPermissionMinimize')}
+              title={i18nService.t('coworkPermissionMinimize')}
+            >
+              <MinusIcon className="h-5 w-5" />
+            </button>
+          )}
           <button
+            type="button"
             onClick={handleDeny}
             className="p-2 rounded-lg hover:bg-surface-raised text-secondary transition-colors"
-            aria-label="Close"
+            aria-label={i18nService.t('coworkPermissionCancel')}
+            title={i18nService.t('coworkPermissionCancel')}
           >
             <XMarkIcon className="h-5 w-5" />
           </button>

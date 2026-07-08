@@ -33,6 +33,10 @@ type AskUserInput = {
   questions: Question[];
 };
 
+type AskUserCallbackInput = AskUserInput & {
+  sessionKey?: string;
+};
+
 type AskUserResponse = {
   behavior: 'allow' | 'deny';
   answers?: Record<string, string>;
@@ -78,7 +82,7 @@ const AskUserQuestionSchema = Type.Object({
 
 async function askUser(
   config: PluginConfig,
-  input: AskUserInput,
+  input: AskUserCallbackInput,
 ): Promise<AskUserResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
@@ -167,7 +171,7 @@ const plugin = {
         }
 
         try {
-          const response = await askUser(config, input);
+          const response = await askUser(config, { ...input, sessionKey });
 
           if (response.behavior === 'deny') {
             return {

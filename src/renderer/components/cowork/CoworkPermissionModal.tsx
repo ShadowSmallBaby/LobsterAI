@@ -1,4 +1,4 @@
-import { ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ExclamationTriangleIcon, MinusIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
@@ -71,6 +71,7 @@ function detectDangerLevelFromCommand(command: string): DangerLevel {
 interface CoworkPermissionModalProps {
   permission: CoworkPermissionRequest;
   onRespond: (result: CoworkPermissionResult) => void;
+  onMinimize?: () => void;
 }
 
 type QuestionOption = {
@@ -185,6 +186,7 @@ const resolveConfirmModeButtons = (question: QuestionItem): { primary: QuestionO
 const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
   permission,
   onRespond,
+  onMinimize,
 }) => {
   const toolInput = useMemo(() => permission.toolInput ?? {}, [permission.toolInput]);
 
@@ -442,10 +444,23 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
                   : i18nService.t('coworkPermissionDescription')}
             </p>
           </div>
+          {onMinimize && (
+            <button
+              type="button"
+              onClick={onMinimize}
+              className="p-2 rounded-lg hover:bg-surface-raised text-secondary transition-colors"
+              aria-label={i18nService.t('coworkPermissionMinimize')}
+              title={i18nService.t('coworkPermissionMinimize')}
+            >
+              <MinusIcon className="h-5 w-5" />
+            </button>
+          )}
           <button
+            type="button"
             onClick={handleDeny}
             className="p-2 rounded-lg hover:bg-surface-raised text-secondary transition-colors"
-            aria-label="Close"
+            aria-label={i18nService.t('coworkPermissionCancel')}
+            title={i18nService.t('coworkPermissionCancel')}
           >
             <XMarkIcon className="h-5 w-5" />
           </button>

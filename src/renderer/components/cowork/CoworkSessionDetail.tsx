@@ -3,6 +3,7 @@ import {
   ArrowDownIcon,
   ChatBubbleLeftIcon,
   DocumentArrowDownIcon,
+  ExclamationTriangleIcon,
   PhotoIcon,
 } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -63,7 +64,14 @@ import { setActiveKitIds } from '../../store/slices/kitSlice';
 import { setActiveSkillIds } from '../../store/slices/skillSlice';
 import type { Artifact } from '../../types/artifact';
 import { ArtifactTypeValue, PREVIEWABLE_ARTIFACT_TYPES } from '../../types/artifact';
-import type { CoworkImageAttachment, CoworkMessage, CoworkMessageMetadata, SubagentSessionSummary } from '../../types/cowork';
+import type {
+  CoworkImageAttachment,
+  CoworkMessage,
+  CoworkMessageMetadata,
+  CoworkPermissionRequest,
+  CoworkPermissionResult,
+  SubagentSessionSummary,
+} from '../../types/cowork';
 import {
   CoworkCollaborationMode,
   type CoworkCollaborationMode as CoworkCollaborationModeType,
@@ -135,6 +143,9 @@ interface CoworkSessionDetailProps {
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
+  minimizedPermission?: CoworkPermissionRequest | null;
+  onRestorePermission?: () => void;
+  onRespondToPermission?: (result: CoworkPermissionResult) => void;
 }
 
 interface BrowserLocalServiceContext {
@@ -170,6 +181,32 @@ const RAIL_LINE_HOVER_STEPS = [28, 18, 13, 10] as const;
 const RAIL_LINE_HEIGHT = 3;
 const RAIL_TARGET_RENDER_RELEASE_DELAY = 2400;
 const RAIL_TARGET_SCROLL_RETRY_LIMIT = 6;
+
+const getPermissionPreviewText = (permission: CoworkPermissionRequest): string => {
+  const toolInput = permission.toolInput ?? {};
+  if (permission.toolName === 'AskUserQuestion') {
+    const rawQuestions = (toolInput as Record<string, unknown>).questions;
+    if (Array.isArray(rawQuestions)) {
+      const firstQuestion = rawQuestions.find((question): question is Record<string, unknown> => (
+        !!question && typeof question === 'object' && !Array.isArray(question)
+      ));
+      if (typeof firstQuestion?.question === 'string') {
+        return firstQuestion.question;
+      }
+    }
+  }
+
+  const command = (toolInput as Record<string, unknown>).command;
+  if (typeof command === 'string' && command.trim()) {
+    return command.trim();
+  }
+
+  try {
+    return JSON.stringify(toolInput);
+  } catch {
+    return permission.toolName;
+  }
+};
 
 const getRailLineWidth = (
   index: number,
@@ -1092,6 +1129,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   onToggleSidebar,
   onNewChat,
   updateBadge,
+  minimizedPermission,
+  onRestorePermission,
+  onRespondToPermission,
 }) => {
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
@@ -1148,6 +1188,15 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const scrollToBottomIntentRef = useRef(false);
   const scrollToBottomSettleTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const suppressSelectedTextActionUntilRef = useRef(0);
+  const minimizedPermissionPreview = minimizedPermission
+    ? getPermissionPreviewText(minimizedPermission)
+    : '';
+  const handleDenyMinimizedPermission = useCallback(() => {
+    onRespondToPermission?.({
+      behavior: 'deny',
+      message: 'Permission denied',
+    });
+  }, [onRespondToPermission]);
 
   const clearScrollToBottomSettleTimers = useCallback(() => {
     scrollToBottomSettleTimersRef.current.forEach(timer => clearTimeout(timer));
@@ -4957,6 +5006,40 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           >
             <PromptInputCollapseIcon className="h-3.5 w-3.5" />
           </button>
+        )}
+        {minimizedPermission && (
+          <div className={`${COWORK_DETAIL_CONTENT_CLASS} mb-2`}>
+            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/95 px-3 py-2 text-sm text-amber-900 shadow-subtle dark:border-amber-900/70 dark:bg-amber-950/35 dark:text-amber-100">
+              <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300" aria-hidden="true" />
+              <span className="shrink-0 font-medium">
+                {i18nService.t('coworkPermissionAwaiting')}
+              </span>
+              <span className="shrink-0 text-amber-700/80 dark:text-amber-200/75">
+                {minimizedPermission.toolName}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-amber-800/85 dark:text-amber-100/80" title={minimizedPermissionPreview}>
+                {minimizedPermissionPreview}
+              </span>
+              {onRestorePermission && (
+                <button
+                  type="button"
+                  onClick={onRestorePermission}
+                  className="shrink-0 rounded-lg bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-200 dark:bg-amber-900/60 dark:text-amber-50 dark:hover:bg-amber-800"
+                >
+                  {i18nService.t('coworkPermissionRestore')}
+                </button>
+              )}
+              {onRespondToPermission && (
+                <button
+                  type="button"
+                  onClick={handleDenyMinimizedPermission}
+                  className="shrink-0 rounded-lg px-2.5 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:text-amber-100 dark:hover:bg-amber-900/60"
+                >
+                  {i18nService.t('coworkDeny')}
+                </button>
+              )}
+            </div>
+          </div>
         )}
         {isArtifactPanelExpanded && (expandedConversationPreview || isSessionBusy) && (
           <div className={`${COWORK_DETAIL_CONTENT_CLASS} mb-1`}>

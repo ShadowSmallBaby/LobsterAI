@@ -44,7 +44,8 @@ import { applyTypographyPreferences } from './services/typography';
 import { RootState, store } from './store';
 import {
   selectCurrentSessionId,
-  selectFirstPendingPermission,
+  selectFirstCurrentSessionPendingPermission,
+  selectPendingPermissions,
 } from './store/selectors/coworkSelectors';
 import { setDraftCollaborationMode, setDraftKitIds, setDraftPrompt } from './store/slices/coworkSlice';
 import { setActiveKitIds } from './store/slices/kitSlice';
@@ -119,9 +120,15 @@ const App: React.FC = () => {
   const dispatch = useDispatch();
   const defaultSelectedModel = useSelector((state: RootState) => state.model.defaultSelectedModel);
   const currentSessionId = useSelector(selectCurrentSessionId);
-  const pendingPermission = useSelector(selectFirstPendingPermission);
+  const pendingPermission = useSelector(selectFirstCurrentSessionPendingPermission);
+  const pendingPermissions = useSelector(selectPendingPermissions);
   const authUser = useSelector((state: RootState) => state.auth.user);
   const isWindows = window.electron.platform === 'win32';
+  const [minimizedPermissionIds, setMinimizedPermissionIds] = useState<string[]>([]);
+  const isPendingPermissionMinimized = pendingPermission
+    ? minimizedPermissionIds.includes(pendingPermission.requestId)
+    : false;
+  const isPermissionModalOpen = pendingPermission !== null && !isPendingPermissionMinimized;
 
   const waitWithTimeout = useCallback(
     async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
@@ -593,6 +600,30 @@ const App: React.FC = () => {
     await coworkService.respondToPermission(pendingPermission.requestId, result);
   }, [pendingPermission]);
 
+  const handleMinimizePermission = useCallback(() => {
+    if (!pendingPermission) return;
+    setMinimizedPermissionIds((previous) => (
+      previous.includes(pendingPermission.requestId)
+        ? previous
+        : [...previous, pendingPermission.requestId]
+    ));
+  }, [pendingPermission]);
+
+  const handleRestorePermission = useCallback(() => {
+    if (!pendingPermission) return;
+    setMinimizedPermissionIds((previous) => (
+      previous.filter((requestId) => requestId !== pendingPermission.requestId)
+    ));
+  }, [pendingPermission]);
+
+  useEffect(() => {
+    const activeRequestIds = new Set(pendingPermissions.map((permission) => permission.requestId));
+    setMinimizedPermissionIds((previous) => {
+      const next = previous.filter((requestId) => activeRequestIds.has(requestId));
+      return next.length === previous.length ? previous : next;
+    });
+  }, [pendingPermissions]);
+
   const handleCloseSettings = () => {
     setShowSettings(false);
     const config = configService.getConfig();
@@ -657,7 +688,7 @@ const App: React.FC = () => {
         return;
       }
 
-      if (showUpdateModal || pendingPermission !== null) return;
+      if (showUpdateModal || isPermissionModalOpen) return;
 
       if (matchesAction(ShortcutAction.NewChat)) {
         event.preventDefault();
@@ -808,7 +839,7 @@ const App: React.FC = () => {
     handleShowSkills,
     handleToggleSidebar,
     mainView,
-    pendingPermission,
+    isPermissionModalOpen,
     showSettings,
     showUpdateModal,
   ]);
@@ -918,7 +949,7 @@ const App: React.FC = () => {
 
   // 根据场景选择使用哪个权限组件
   const permissionModal = useMemo(() => {
-    if (!pendingPermission) return null;
+    if (!pendingPermission || isPendingPermissionMinimized) return null;
 
     // 检查是否为 AskUserQuestion 且有多个问题 -> 使用向导式组件
     const isQuestionTool = pendingPermission.toolName === 'AskUserQuestion';
@@ -931,6 +962,7 @@ const App: React.FC = () => {
           <CoworkQuestionWizard
             permission={pendingPermission}
             onRespond={handlePermissionResponse}
+            onMinimize={handleMinimizePermission}
           />
         );
       }
@@ -941,11 +973,12 @@ const App: React.FC = () => {
       <CoworkPermissionModal
         permission={pendingPermission}
         onRespond={handlePermissionResponse}
+        onMinimize={handleMinimizePermission}
       />
     );
-  }, [pendingPermission, handlePermissionResponse]);
+  }, [pendingPermission, handlePermissionResponse, handleMinimizePermission, isPendingPermissionMinimized]);
 
-  const isOverlayActive = showSettings || showUpdateModal || pendingPermission !== null;
+  const isOverlayActive = showSettings || showUpdateModal || isPermissionModalOpen;
   const shouldShowUpdateBadge =
     updateInfo &&
     appUpdateState.status !== AppUpdateStatus.Checking &&
@@ -1081,6 +1114,9 @@ const App: React.FC = () => {
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
+                minimizedPermission={isPendingPermissionMinimized ? pendingPermission : null}
+                onRestorePermission={handleRestorePermission}
+                onRespondToPermission={handlePermissionResponse}
               />
             )}
           </div>
@@ -1089,7 +1125,7 @@ const App: React.FC = () => {
 
       <EngineFailureOverlay
         onRequestAppSettings={privacyAgreed === true && !showWelcome ? handleShowSettings : undefined}
-        suspended={showSettings || showUpdateModal || pendingPermission !== null || privacyAgreed === false || showWelcome}
+        suspended={showSettings || showUpdateModal || isPermissionModalOpen || privacyAgreed === false || showWelcome}
       />
 
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}

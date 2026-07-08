@@ -53,3 +53,17 @@ export const selectFirstPendingPermission = createSelector(
   selectPendingPermissions,
   (permissions) => permissions[0] ?? null,
 );
+
+export const selectFirstCurrentSessionPendingPermission = createSelector(
+  selectPendingPermissions,
+  selectCurrentSessionId,
+  (permissions, currentSessionId) => {
+    if (!currentSessionId) return null;
+    return permissions.find((permission) => permission.sessionId === currentSessionId) ?? null;
+  },
+);
+
+export const selectPendingPermissionSessionIds = createSelector(
+  selectPendingPermissions,
+  (permissions) => permissions.map((permission) => permission.sessionId),
+);

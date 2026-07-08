@@ -5,9 +5,11 @@ import {
   CoworkSessionStatusValue,
   type CoworkSessionSummary,
 } from '../../types/cowork';
+import { AgentSidebarIndicator } from './constants';
 import type { AgentSidebarAgentSummary } from './types';
 import {
   collapseAgentSidebarTaskList,
+  deriveAgentSidebarIndicator,
   removeAgentSidebarAgentTaskPreviews,
   removeAgentSidebarTaskPreviews,
   sortAgentSidebarAgents,
@@ -89,6 +91,16 @@ test('sortAgentSidebarAgents keeps pinned agents in first-pinned-first order', (
     'regular',
     'another-regular',
   ]);
+});
+
+test('deriveAgentSidebarIndicator prioritizes pending permission state', () => {
+  const session = makeSession('pending-session', 100, 200, CoworkSessionStatusValue.Running);
+
+  expect(deriveAgentSidebarIndicator(
+    session,
+    new Set([session.id]),
+    new Set([session.id]),
+  )).toBe(AgentSidebarIndicator.PendingPermission);
 });
 
 test('collapseAgentSidebarTaskList resets one agent history list to preview mode', () => {

@@ -24,7 +24,15 @@ import { addMessage, setCurrentSession, setDraftCollaborationMode, setDraftKitId
 import { clearActiveKits } from '../../store/slices/kitSlice';
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
-import { CoworkCollaborationMode, type CoworkCollaborationMode as CoworkCollaborationModeType, type CoworkImageAttachment, type CoworkSession, type OpenClawEngineStatus } from '../../types/cowork';
+import {
+  CoworkCollaborationMode,
+  type CoworkCollaborationMode as CoworkCollaborationModeType,
+  type CoworkImageAttachment,
+  type CoworkPermissionRequest,
+  type CoworkPermissionResult,
+  type CoworkSession,
+  type OpenClawEngineStatus,
+} from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
@@ -64,9 +72,23 @@ export interface CoworkViewProps {
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
+  minimizedPermission?: CoworkPermissionRequest | null;
+  onRestorePermission?: () => void;
+  onRespondToPermission?: (result: CoworkPermissionResult) => void;
 }
 
-const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSkills, onShowKits, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
+const CoworkView: React.FC<CoworkViewProps> = ({
+  onRequestAppSettings,
+  onShowSkills,
+  onShowKits,
+  isSidebarCollapsed,
+  onToggleSidebar,
+  onNewChat,
+  updateBadge,
+  minimizedPermission,
+  onRestorePermission,
+  onRespondToPermission,
+}) => {
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
@@ -790,6 +812,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
           onToggleSidebar={onToggleSidebar}
           onNewChat={onNewChat}
           updateBadge={updateBadge}
+          minimizedPermission={minimizedPermission}
+          onRestorePermission={onRestorePermission}
+          onRespondToPermission={onRespondToPermission}
         />
       </div>
     );

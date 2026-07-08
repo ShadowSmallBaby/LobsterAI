@@ -14,6 +14,7 @@ import {
   type MediaGenerationRequest,
   type MediaGenerationResponse,
 } from '../libs/mcpBridgeServer';
+import { parseManagedSessionKey } from '../libs/openclawChannelSessionSync';
 import { OpenClawConfigImpact } from '../libs/openclawConfigImpact';
 import type { ResolvedMcpServer } from '../libs/openclawConfigSync';
 import { resolveStdioCommand } from '../libs/resolveStdioCommand';
@@ -116,16 +117,22 @@ export class McpRuntime {
     await this.bridgeServer.start();
 
     this.bridgeServer.onAskUser(request => {
+      const sessionId = request.sessionKey
+        ? parseManagedSessionKey(request.sessionKey)?.sessionId ?? '__askuser__'
+        : '__askuser__';
       const windows = BrowserWindow.getAllWindows();
       windows.forEach(win => {
         if (win.isDestroyed()) return;
         try {
           win.webContents.send('cowork:stream:permission', {
-            sessionId: '__askuser__',
+            sessionId,
             request: {
               requestId: request.requestId,
               toolName: 'AskUserQuestion',
-              toolInput: { questions: request.questions },
+              toolInput: {
+                questions: request.questions,
+                ...(request.sessionKey ? { sessionKey: request.sessionKey } : {}),
+              },
             },
           });
         } catch (error) {
@@ -160,9 +167,10 @@ export class McpRuntime {
   async askUserInternal(
     questions: AskUserRequest['questions'],
     timeoutMs?: number,
+    options?: { sessionKey?: string },
   ): Promise<AskUserResponse | null> {
     if (!this.bridgeServer) return null;
-    return await this.bridgeServer.askUserInternal(questions, timeoutMs);
+    return await this.bridgeServer.askUserInternal(questions, timeoutMs, options);
   }
 
   resolveAskUser(requestId: string, response: AskUserResponse): void {

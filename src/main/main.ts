@@ -4178,15 +4178,19 @@ if (!gotTheLock) {
           `生成后请妥善保存视频，若误删可在[「个人主页-用量详情-生成任务」](${portalTasksUrl})中下载`,
           '~~（链接有时效性，请尽快下载）~~',
         ].join('\n');
-        const confirmResponse = await getMcpRuntime().askUserInternal([{
-          question: questionText,
-          title: '确认生成视频？',
-          subtitle,
-          options: [
-            { label: '确认生成', description: '开始视频生成任务' },
-            { label: '取消', description: '暂不生成' },
-          ],
-        }]);
+        const confirmResponse = await getMcpRuntime().askUserInternal(
+          [{
+            question: questionText,
+            title: '确认生成视频？',
+            subtitle,
+            options: [
+              { label: '确认生成', description: '开始视频生成任务' },
+              { label: '取消', description: '暂不生成' },
+            ],
+          }],
+          undefined,
+          { sessionKey: request.context.sessionKey },
+        );
 
         const userCancelled = confirmResponse?.behavior === 'deny'
           || confirmResponse?.answers?.[questionText] === '取消';

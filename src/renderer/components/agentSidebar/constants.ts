@@ -1,5 +1,6 @@
 export const AgentSidebarIndicator = {
   None: 'none',
+  PendingPermission: 'pending_permission',
   Running: 'running',
   CompletedUnread: 'completed_unread',
 } as const;

@@ -7,6 +7,7 @@ import { RootState } from '../../store';
 import {
   selectCoworkSessions,
   selectCurrentSessionId,
+  selectPendingPermissionSessionIds,
   selectUnreadSessionIds,
 } from '../../store/selectors/coworkSelectors';
 import type { CoworkSessionSummary } from '../../types/cowork';
@@ -51,7 +52,11 @@ const mergeSessions = (
 export const deriveAgentSidebarIndicator = (
   session: CoworkSessionSummary,
   unreadSessionIds: Set<string>,
+  pendingPermissionSessionIds: Set<string>,
 ) => {
+  if (pendingPermissionSessionIds.has(session.id)) {
+    return AgentSidebarIndicator.PendingPermission;
+  }
   if (session.status === CoworkSessionStatusValue.Running) {
     return AgentSidebarIndicator.Running;
   }
@@ -99,6 +104,7 @@ export const toAgentSidebarTaskNode = (
   session: CoworkSessionSummary,
   currentSessionId: string | null,
   unreadSessionIds: Set<string>,
+  pendingPermissionSessionIds: Set<string>,
 ): AgentSidebarTaskNode => {
   return {
     id: session.id,
@@ -109,7 +115,7 @@ export const toAgentSidebarTaskNode = (
     pinOrder: session.pinOrder ?? null,
     updatedAt: session.updatedAt,
     createdAt: session.createdAt,
-    indicator: deriveAgentSidebarIndicator(session, unreadSessionIds),
+    indicator: deriveAgentSidebarIndicator(session, unreadSessionIds, pendingPermissionSessionIds),
     isSelected: session.id === currentSessionId,
   };
 };
@@ -161,6 +167,7 @@ export const useAgentSidebarState = () => {
   const currentSessionId = useSelector(selectCurrentSessionId);
   const sessions = useSelector(selectCoworkSessions);
   const unreadSessionIds = useSelector(selectUnreadSessionIds);
+  const pendingPermissionSessionIds = useSelector(selectPendingPermissionSessionIds);
 
   const [expandedAgentIds, setExpandedAgentIds] = useState<string[]>([]);
   const [expandedTaskListAgentIds, setExpandedTaskListAgentIds] = useState<string[]>([]);
@@ -192,6 +199,10 @@ export const useAgentSidebarState = () => {
   }, [enabledAgents]);
 
   const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
+  const pendingPermissionSessionIdSet = useMemo(
+    () => new Set(pendingPermissionSessionIds),
+    [pendingPermissionSessionIds],
+  );
   const expandedAgentIdSet = useMemo(() => new Set(expandedAgentIds), [expandedAgentIds]);
   const expandedTaskListAgentIdSet = useMemo(
     () => new Set(expandedTaskListAgentIds),
@@ -554,7 +565,12 @@ export const useAgentSidebarState = () => {
         ? sortedTaskPreviews
         : sortedTaskPreviews.slice(0, AgentSidebarPageSize.Preview);
       const tasks = visibleTaskPreviews.map((session) => {
-        return toAgentSidebarTaskNode(session, currentSessionId, unreadSessionIdSet);
+        return toAgentSidebarTaskNode(
+          session,
+          currentSessionId,
+          unreadSessionIdSet,
+          pendingPermissionSessionIdSet,
+        );
       });
 
       return {
@@ -575,6 +591,7 @@ export const useAgentSidebarState = () => {
     failedAgentIdSet,
     hasMoreTasksByAgentId,
     loadingAgentIdSet,
+    pendingPermissionSessionIdSet,
     sortedEnabledAgents,
     taskPreviewsByAgentId,
     unreadSessionIdSet,
