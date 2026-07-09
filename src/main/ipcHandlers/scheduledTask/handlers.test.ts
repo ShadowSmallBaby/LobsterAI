@@ -197,6 +197,75 @@ describe('registerScheduledTaskHandlers', () => {
     });
   });
 
+  test('filters account-less group conversation options by the selected bot agent binding', async () => {
+    const { deps } = makeDeps();
+    const listSessionMappings = vi.fn(() => [
+      {
+        imConversationId: 'group:oc_622a147f6d49851fb81e138022fcb485',
+        platform: 'feishu',
+        coworkSessionId: 'cw-main-group',
+        agentId: 'main',
+        lastActiveAt: '3',
+      },
+      {
+        imConversationId: 'group:oc_622a147f6d49851fb81e138022fcb485',
+        platform: 'feishu',
+        coworkSessionId: 'cw-bot-1-group',
+        agentId: 'agent-feishu-bot-1',
+        lastActiveAt: '2',
+      },
+      {
+        imConversationId: '61823a93:direct:ou_30660c6d4aaeade046cc31c9a95d747f',
+        platform: 'feishu',
+        coworkSessionId: 'cw-bot-1-dm',
+        agentId: 'agent-feishu-bot-1',
+        lastActiveAt: '1',
+      },
+    ]);
+    const boundDeps: ScheduledTaskHandlerDeps = {
+      ...deps,
+      getIMGatewayManager: () => ({
+        getIMStore: () => ({
+          getSessionMapping: () => undefined,
+          getIMSettings: () => ({
+            platformAgentBindings: {
+              'feishu:61823a93-ba68-4cdf-81fd-ddd70311ca7f': 'agent-feishu-bot-1',
+            },
+          }),
+          listSessionMappings,
+        }),
+        primeConversationReplyRoute: vi.fn(async () => {}),
+      }),
+    };
+    registerScheduledTaskHandlers(boundDeps);
+
+    const handler = registeredHandlers.get(ScheduledTaskIpc.ListChannelConversations);
+    const result = await handler?.(undefined, 'feishu', '61823a93', '61823a93');
+
+    expect(listSessionMappings).toHaveBeenCalledWith('feishu', '61823a93');
+    expect(result).toEqual({
+      success: true,
+      conversations: [
+        {
+          conversationId: 'group:oc_622a147f6d49851fb81e138022fcb485',
+          platform: 'feishu',
+          coworkSessionId: 'cw-bot-1-group',
+          lastActiveAt: '2',
+          peerKind: 'group',
+          displayName: 'oc_622a147f6d49851fb81e138022fcb485',
+        },
+        {
+          conversationId: '61823a93:direct:ou_30660c6d4aaeade046cc31c9a95d747f',
+          platform: 'feishu',
+          coworkSessionId: 'cw-bot-1-dm',
+          lastActiveAt: '1',
+          peerKind: 'direct',
+          displayName: 'ou_30660c6d4aaeade046cc31c9a95d747f',
+        },
+      ],
+    });
+  });
+
   test('keeps the stripped delivery target when gateway sessions are unavailable', async () => {
     const { cronJobService, deps } = makeDeps();
     registerScheduledTaskHandlers(deps);

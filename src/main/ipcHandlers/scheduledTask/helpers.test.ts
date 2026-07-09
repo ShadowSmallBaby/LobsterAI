@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   dedupeConversationMappings,
+  filterConversationMappingsForSelectedAccount,
   resolveConversationAgentIdFromMappings,
   resolveImDeliveryHintsFromSessions,
 } from './helpers';
@@ -195,5 +196,81 @@ describe('dedupeConversationMappings', () => {
       { imConversationId: `group:${LOWER_PEER}`, agentId: 'main' },
       { imConversationId: `group:${LOWER_PEER}`, agentId: 'agent-2' },
     ]);
+  });
+});
+
+describe('filterConversationMappingsForSelectedAccount', () => {
+  test('keeps only the selected account bound agent for account-less group mappings', () => {
+    const result = filterConversationMappingsForSelectedAccount(
+      [
+        {
+          imConversationId: 'group:oc_622a147f6d49851fb81e138022fcb485',
+          agentId: 'main',
+        },
+        {
+          imConversationId: 'group:oc_622a147f6d49851fb81e138022fcb485',
+          agentId: 'agent-feishu-bot-1',
+        },
+        {
+          imConversationId: '61823a93:direct:ou_30660c6d4aaeade046cc31c9a95d747f',
+          agentId: 'agent-feishu-bot-1',
+        },
+      ],
+      'feishu',
+      '61823a93',
+      { 'feishu:61823a93-ba68-4cdf-81fd-ddd70311ca7f': 'agent-feishu-bot-1' },
+    );
+
+    expect(result).toEqual([
+      {
+        imConversationId: 'group:oc_622a147f6d49851fb81e138022fcb485',
+        agentId: 'agent-feishu-bot-1',
+      },
+      {
+        imConversationId: '61823a93:direct:ou_30660c6d4aaeade046cc31c9a95d747f',
+        agentId: 'agent-feishu-bot-1',
+      },
+    ]);
+  });
+
+  test('leaves mappings unchanged when no account is selected', () => {
+    const mappings = [
+      { imConversationId: 'group:oc_1', agentId: 'main' },
+      { imConversationId: 'group:oc_1', agentId: 'agent-2' },
+    ];
+
+    expect(
+      filterConversationMappingsForSelectedAccount(mappings, 'feishu', undefined, {
+        'feishu:61823a93-ba68-4cdf-81fd-ddd70311ca7f': 'agent-2',
+      }),
+    ).toEqual(mappings);
+  });
+
+  test('treats an explicitly empty binding map as the main agent default', () => {
+    const result = filterConversationMappingsForSelectedAccount(
+      [
+        { imConversationId: 'group:oc_1', agentId: 'main' },
+        { imConversationId: 'group:oc_1', agentId: 'agent-2' },
+      ],
+      'feishu',
+      'a826946b',
+      {},
+    );
+
+    expect(result).toEqual([{ imConversationId: 'group:oc_1', agentId: 'main' }]);
+  });
+
+  test('drops account-less group mappings that do not match the selected bot binding', () => {
+    const result = filterConversationMappingsForSelectedAccount(
+      [
+        { imConversationId: 'group:oc_1', agentId: 'main' },
+        { imConversationId: 'group:oc_2', agentId: 'agent-other' },
+      ],
+      'feishu',
+      '61823a93',
+      { 'feishu:61823a93-ba68-4cdf-81fd-ddd70311ca7f': 'agent-feishu-bot-1' },
+    );
+
+    expect(result).toEqual([]);
   });
 });

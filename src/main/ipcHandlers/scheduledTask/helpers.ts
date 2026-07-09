@@ -1,4 +1,6 @@
 import { parseImConversationId, PlatformRegistry } from '../../../shared/platform';
+import type { Platform } from '../../im/types';
+import { resolveAgentBinding } from '../../libs/openclawChannelSessionSync';
 
 export interface ScheduledTaskHelperDeps {
   getIMGatewayManager: () => {
@@ -253,4 +255,41 @@ export function dedupeConversationMappings<T extends { imConversationId: string;
     result.push(mapping);
   }
   return result;
+}
+
+/**
+ * Narrows account-less group mappings for a selected multi-instance bot.
+ *
+ * OpenClaw's canonical group session keys are scoped by agent + channel +
+ * group id, e.g. `agent:<agentId>:feishu:group:<chatId>`. They intentionally
+ * do not include accountId, so persisted group conversation ids cannot be
+ * filtered by account prefix like direct chats. When the scheduled-task form
+ * already selected a bot instance, use that instance's current agent binding
+ * as the best available group ownership signal.
+ */
+export function filterConversationMappingsForSelectedAccount<
+  T extends { imConversationId: string; agentId?: string },
+>(
+  mappings: readonly T[],
+  platform: Platform,
+  accountId: string | undefined,
+  platformAgentBindings: Record<string, string> | undefined,
+): T[] {
+  const selectedAccountId = accountId?.trim();
+  if (!selectedAccountId) return [...mappings];
+  if (!platformAgentBindings) return [...mappings];
+
+  const selectedAgentId = resolveAgentBinding(
+    platformAgentBindings,
+    platform,
+    selectedAccountId,
+  );
+
+  return mappings.filter((mapping) => {
+    const parsed = parseImConversationId(mapping.imConversationId);
+    if (parsed.accountId) return true;
+    if (parsed.peerKind !== 'group') return true;
+    const mappingAgentId = mapping.agentId?.trim();
+    return !mappingAgentId || mappingAgentId === selectedAgentId;
+  });
 }

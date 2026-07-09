@@ -7810,10 +7810,11 @@ if (!gotTheLock) {
           getIMGatewayManager()
             .getIMStore()
             .getSessionMapping(conversationId, platform as Platform),
-        listSessionMappings: (platform: string, agentId?: string) =>
+        getIMSettings: () => getIMGatewayManager().getIMStore().getIMSettings(),
+        listSessionMappings: (platform: string, accountId?: string) =>
           getIMGatewayManager()
             .getIMStore()
-            .listSessionMappings(platform as Platform, agentId)
+            .listSessionMappings(platform as Platform, accountId)
             .map(mapping => ({
               ...mapping,
               lastActiveAt: String(mapping.lastActiveAt),

@@ -16,6 +16,7 @@ import {
 } from '../../../shared/platform';
 import {
   dedupeConversationMappings,
+  filterConversationMappingsForSelectedAccount,
   listScheduledTaskChannels,
   resolveConversationAgentIdFromMappings,
   resolveImDeliveryHintsFromSessions,
@@ -23,6 +24,14 @@ import {
 
 /** Matches auto-generated channel session titles, e.g. "[TG] group:123". */
 const AUTO_CHANNEL_TITLE_RE = /^\[[^\]]*\]\s/;
+
+type ConversationMappingForList = {
+  imConversationId: string;
+  platform: string;
+  coworkSessionId: string;
+  agentId: string;
+  lastActiveAt: string;
+};
 
 export interface ScheduledTaskHandlerDeps {
   getCronJobService: () => CronJobService;
@@ -37,16 +46,13 @@ export interface ScheduledTaskHandlerDeps {
                 coworkSessionId: string;
               }
             | undefined;
+          getIMSettings?: () => {
+            platformAgentBindings?: Record<string, string>;
+          };
           listSessionMappings: (
             platform: string,
-            agentId?: string,
-          ) => Array<{
-            imConversationId: string;
-            platform: string;
-            coworkSessionId: string;
-            agentId: string;
-            lastActiveAt: string;
-          }>;
+            accountId?: string,
+          ) => ConversationMappingForList[];
         }
       | undefined;
     primeConversationReplyRoute: (
@@ -82,6 +88,82 @@ function asGatewayRpcClient(value: unknown): GatewayRpcClient | null {
     return value as GatewayRpcClient;
   }
   return null;
+}
+
+function summarizeAccountId(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.length <= 16 ? trimmed : `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
+}
+
+function summarizeGroupMappings(
+  mappings: readonly ConversationMappingForList[],
+): Array<{ peerId: string; agentId: string }> {
+  return mappings
+    .map((mapping) => {
+      const parsed = parseImConversationId(mapping.imConversationId);
+      if (parsed.accountId || parsed.peerKind !== 'group') return null;
+      return {
+        peerId: summarizeAccountId(parsed.peerId) ?? parsed.peerId,
+        agentId: mapping.agentId,
+      };
+    })
+    .filter((entry): entry is { peerId: string; agentId: string } => Boolean(entry))
+    .slice(0, 8);
+}
+
+function summarizeRelevantBindings(
+  platformAgentBindings: Record<string, string> | undefined,
+  platform: string,
+  selectedAccountId: string | undefined,
+): Array<{ key: string; agentId: string }> {
+  if (!platformAgentBindings) return [];
+  const selectedPrefix = selectedAccountId ? `${platform}:${selectedAccountId}` : null;
+  return Object.entries(platformAgentBindings)
+    .filter(([key]) => (
+      key === platform ||
+      (selectedPrefix ? key.startsWith(selectedPrefix) : key.startsWith(`${platform}:`))
+    ))
+    .map(([key, agentId]) => ({ key: summarizeAccountId(key) ?? key, agentId }))
+    .slice(0, 8);
+}
+
+function logChannelConversationList(params: {
+  channel: string;
+  platform: string;
+  accountId?: string;
+  filterAccountId?: string;
+  selectedAccountId?: string;
+  platformAgentBindings?: Record<string, string>;
+  rawMappings: readonly ConversationMappingForList[];
+  filteredMappings: readonly ConversationMappingForList[];
+  dedupedMappings: readonly ConversationMappingForList[];
+}): void {
+  const filteredSet = new Set(params.filteredMappings);
+  const droppedMappings = params.rawMappings.filter(mapping => !filteredSet.has(mapping));
+  console.log(
+    '[ScheduledTask] listed channel conversations:',
+    JSON.stringify({
+      channel: params.channel,
+      platform: params.platform,
+      accountId: summarizeAccountId(params.accountId),
+      filterAccountId: summarizeAccountId(params.filterAccountId),
+      selectedAccountId: summarizeAccountId(params.selectedAccountId),
+      rawCount: params.rawMappings.length,
+      filteredCount: params.filteredMappings.length,
+      dedupedCount: params.dedupedMappings.length,
+      bindingCount: Object.keys(params.platformAgentBindings ?? {}).length,
+      rawGroups: summarizeGroupMappings(params.rawMappings),
+      filteredGroups: summarizeGroupMappings(params.filteredMappings),
+      dedupedGroups: summarizeGroupMappings(params.dedupedMappings),
+      droppedGroups: summarizeGroupMappings(droppedMappings),
+      relevantBindings: summarizeRelevantBindings(
+        params.platformAgentBindings,
+        params.platform,
+        params.selectedAccountId,
+      ),
+    }),
+  );
 }
 
 /**
@@ -441,8 +523,31 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
         if (!platform) return { success: true, conversations: [] };
         const imStore = getIMGatewayManager()?.getIMStore();
         if (!imStore) return { success: true, conversations: [] };
-        const mappings = dedupeConversationMappings(
-          imStore.listSessionMappings(platform, filterAccountId ?? accountId),
+        const selectedAccountId = filterAccountId ?? accountId;
+        const imSettings = imStore.getIMSettings?.();
+        const platformAgentBindings = imSettings
+          ? (imSettings.platformAgentBindings ?? {})
+          : undefined;
+        const rawMappings = imStore.listSessionMappings(platform, selectedAccountId);
+        const filteredMappings = filterConversationMappingsForSelectedAccount(
+          rawMappings,
+          platform,
+          selectedAccountId,
+          platformAgentBindings,
+        );
+        const mappings = dedupeConversationMappings(filteredMappings);
+        logChannelConversationList(
+          {
+            channel,
+            platform,
+            accountId,
+            filterAccountId,
+            selectedAccountId,
+            platformAgentBindings,
+            rawMappings,
+            filteredMappings,
+            dedupedMappings: mappings,
+          },
         );
         const conversations = mappings.map(m => {
           const parsed = parseImConversationId(m.imConversationId);
