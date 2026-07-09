@@ -2842,18 +2842,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           >
             <PlanModeIcon className="h-5 w-5 shrink-0 text-secondary" />
             <span className="min-w-0 flex-1 truncate">{i18nService.t('coworkPlanMode')}</span>
-            <span
-              className={`relative h-5 w-9 rounded-full transition-colors ${
-                isPlanMode ? 'bg-primary' : 'bg-neutral-200 dark:bg-neutral-700'
-              }`}
-              aria-hidden="true"
-            >
-              <span
-                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                  isPlanMode ? 'translate-x-4' : 'translate-x-0.5'
-                }`}
-              />
-            </span>
           </button>
 
           <SkillsPopover
