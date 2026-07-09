@@ -966,7 +966,12 @@ const App: React.FC = () => {
     />
   ) : null;
   const windowsStandaloneTitleBar = isWindows ? (
-    <WindowsAppTitleBar isOverlayActive={isOverlayActive} />
+    <WindowsAppTitleBar
+      isOverlayActive={isOverlayActive}
+      isSidebarCollapsed={isSidebarCollapsed}
+      onToggleSidebar={isInitialized && !initError ? handleToggleSidebar : undefined}
+      sidebarToggleLabel={isSidebarCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
+    />
   ) : null;
 
   if (!isInitialized) {
