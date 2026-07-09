@@ -967,6 +967,7 @@ const App: React.FC = () => {
     />
   ) : null;
   const canUseWindowsTopBarActions = isInitialized && !initError;
+  const canUseWindowsCollapsedTopBarActions = canUseWindowsTopBarActions && isSidebarCollapsed;
   const collapsedHeaderUpdateBadge = isSidebarCollapsed && !isWindows ? updateBadge : null;
   const windowsStandaloneTitleBar = isWindows ? (
     <WindowsAppTitleBar
@@ -974,10 +975,10 @@ const App: React.FC = () => {
       isSidebarCollapsed={isSidebarCollapsed}
       sidebarWidth={sidebarWidth}
       onToggleSidebar={canUseWindowsTopBarActions ? handleToggleSidebar : undefined}
-      onNewChat={canUseWindowsTopBarActions ? handleNewChat : undefined}
+      onNewChat={canUseWindowsCollapsedTopBarActions ? handleNewChat : undefined}
       sidebarToggleLabel={isSidebarCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
       newChatLabel={i18nService.t('newChat')}
-      updateBadge={canUseWindowsTopBarActions && isSidebarCollapsed ? updateBadge : null}
+      updateBadge={canUseWindowsCollapsedTopBarActions ? updateBadge : null}
     />
   ) : null;
 
