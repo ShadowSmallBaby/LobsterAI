@@ -228,16 +228,17 @@ export function resolveImDeliveryHintsFromSessions(params: {
 }
 
 /**
- * Restores a WeCom group's case-sensitive native chat id from inbound session
- * origin metadata. WeCom group sessions intentionally do not update
- * `lastTo`/`deliveryContext`, while OpenClaw lowercases their session keys.
+ * Restores a case-sensitive native group id from inbound session origin
+ * metadata. OpenClaw lowercases channel peer ids in session keys, but providers
+ * such as WeCom and DingTalk require their opaque group ids unchanged.
  *
  * This is deliberately narrower than `resolveImDeliveryHintsFromSessions`:
- * only WeCom group origins are considered, an explicitly selected account must
- * match, and conflicting native ids are rejected instead of picking one.
+ * only group origins from the requested platform are considered, an explicitly
+ * selected account must match, and conflicting native ids are rejected.
  */
-export function resolveWecomGroupDeliveryTargetFromSessions(params: {
+export function resolveGroupDeliveryTargetFromSessions(params: {
   sessions: readonly unknown[];
+  platform: Platform;
   peerId: string;
   preferredAccountId?: string;
 }): string | null {
@@ -252,7 +253,7 @@ export function resolveWecomGroupDeliveryTargetFromSessions(params: {
     if (!origin || origin.chatType !== ImPeerKind.Group) continue;
 
     const originChannel = asNonEmptyString(origin.provider) ?? asNonEmptyString(origin.surface);
-    if (!originChannel || PlatformRegistry.platformOfChannel(originChannel) !== WECOM_PLATFORM) {
+    if (!originChannel || PlatformRegistry.platformOfChannel(originChannel) !== params.platform) {
       continue;
     }
 
@@ -263,7 +264,7 @@ export function resolveWecomGroupDeliveryTargetFromSessions(params: {
     if (!originTo) continue;
     const colonIndex = originTo.indexOf(':');
     const prefix = colonIndex > 0 ? originTo.slice(0, colonIndex) : '';
-    const withoutChannel = prefix && PlatformRegistry.platformOfChannel(prefix) === WECOM_PLATFORM
+    const withoutChannel = prefix && PlatformRegistry.platformOfChannel(prefix) === params.platform
       ? originTo.slice(colonIndex + 1)
       : originTo;
     const parsedTarget = parseImConversationId(withoutChannel);
@@ -274,6 +275,18 @@ export function resolveWecomGroupDeliveryTargetFromSessions(params: {
   }
 
   return nativeTargets.size === 1 ? [...nativeTargets][0] : null;
+}
+
+/** Backward-compatible WeCom wrapper for existing callers and tests. */
+export function resolveWecomGroupDeliveryTargetFromSessions(params: {
+  sessions: readonly unknown[];
+  peerId: string;
+  preferredAccountId?: string;
+}): string | null {
+  return resolveGroupDeliveryTargetFromSessions({
+    ...params,
+    platform: WECOM_PLATFORM,
+  });
 }
 
 /**

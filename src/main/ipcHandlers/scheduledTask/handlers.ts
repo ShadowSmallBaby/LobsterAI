@@ -28,13 +28,18 @@ import {
   filterConversationMappingsForSelectedAccount,
   listScheduledTaskChannels,
   resolveConversationAgentIdFromMappings,
+  resolveGroupDeliveryTargetFromSessions,
   resolveImDeliveryHintsFromSessions,
-  resolveWecomGroupDeliveryTargetFromSessions,
 } from './helpers';
 
 /** Matches auto-generated channel session titles, e.g. "[TG] group:123". */
 const AUTO_CHANNEL_TITLE_RE = /^\[[^\]]*\]\s/;
+const DINGTALK_PLATFORM: Platform = 'dingtalk';
 const WECOM_PLATFORM: Platform = 'wecom';
+const CASE_SENSITIVE_GROUP_TARGET_PLATFORMS = new Set<Platform>([
+  DINGTALK_PLATFORM,
+  WECOM_PLATFORM,
+]);
 
 type ConversationMappingForList = {
   imConversationId: string;
@@ -64,9 +69,9 @@ function normalizeImAnnounceDeliveryTo(
     return parsed.peerId;
   }
 
-  // A bare WeCom target is already the provider-native id. Do not replace its
-  // case from a lowercased OpenClaw session mapping during legacy migration.
-  if (platform === WECOM_PLATFORM && !rawTo.includes(':')) {
+  // Bare targets for case-sensitive group-id providers are already native ids.
+  // Do not replace their case from a lowercased OpenClaw session mapping.
+  if (CASE_SENSITIVE_GROUP_TARGET_PLATFORMS.has(platform) && !rawTo.includes(':')) {
     return rawTo;
   }
 
@@ -299,7 +304,7 @@ async function restoreAnnounceDeliveryHintsFromGateway(
   normalizedInput: Record<string, any>,
   context: AnnounceNormalizationContext,
   deps: Pick<ScheduledTaskHandlerDeps, 'getOpenClawRuntimeAdapter'>,
-  options?: { wecomCasingOnly?: boolean },
+  options?: { casingOnly?: boolean },
 ): Promise<void> {
   const { getOpenClawRuntimeAdapter } = deps;
   const delivery = normalizedInput.delivery;
@@ -325,7 +330,7 @@ async function restoreAnnounceDeliveryHintsFromGateway(
         const selectedAccountId = typeof delivery.accountId === 'string'
           ? delivery.accountId
           : undefined;
-        if (!options?.wecomCasingOnly) {
+        if (!options?.casingOnly) {
           const hints = resolveImDeliveryHintsFromSessions({
             sessions,
             channel: delivery.channel,
@@ -348,15 +353,16 @@ async function restoreAnnounceDeliveryHintsFromGateway(
           }
         }
 
-        if (context.platform === WECOM_PLATFORM) {
-          const nativeGroupTarget = resolveWecomGroupDeliveryTargetFromSessions({
+        if (CASE_SENSITIVE_GROUP_TARGET_PLATFORMS.has(context.platform)) {
+          const nativeGroupTarget = resolveGroupDeliveryTargetFromSessions({
             sessions,
+            platform: context.platform,
             peerId: delivery.to,
             preferredAccountId: selectedAccountId,
           });
           if (nativeGroupTarget && nativeGroupTarget !== delivery.to) {
             console.log(
-              '[ScheduledTask] restored WeCom group delivery.to casing from gateway origin:',
+              `[ScheduledTask] restored ${context.platform} group delivery.to casing from gateway origin:`,
               delivery.to,
               '->',
               nativeGroupTarget,
@@ -438,14 +444,14 @@ async function buildAnnounceNormalizationPatch(
     ? normalizedInput.delivery.to.trim()
     : '';
   if (
-    context.platform === WECOM_PLATFORM &&
+    CASE_SENSITIVE_GROUP_TARGET_PLATFORMS.has(context.platform) &&
     normalizedTo &&
     normalizedTo === normalizedTo.toLowerCase()
   ) {
-    // Historical repair must only restore the case-sensitive WeCom group id;
+    // Historical repair must only restore the case-sensitive native group id;
     // it must not infer or change account routing from gateway metadata.
     await restoreAnnounceDeliveryHintsFromGateway(normalizedInput, context, deps, {
-      wecomCasingOnly: true,
+      casingOnly: true,
     });
   }
 

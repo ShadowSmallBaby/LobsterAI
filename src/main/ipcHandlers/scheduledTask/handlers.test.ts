@@ -203,6 +203,50 @@ describe('registerScheduledTaskHandlers', () => {
     });
   });
 
+  test('restores a DingTalk group id from case-preserving origin metadata on create', async () => {
+    const nativeConversationId = 'cid+wQbmjFBusv8Bld+Du9t1w==';
+    const request = vi.fn(async () => ({
+      sessions: [
+        {
+          origin: {
+            provider: 'dingtalk-connector',
+            chatType: 'group',
+            to: nativeConversationId,
+            accountId: 'dingtalk-bot-1',
+          },
+        },
+      ],
+    }));
+    const { cronJobService, deps } = makeDeps(OpenClawEnginePhase.Running, {
+      gatewayClient: { request },
+    });
+    registerScheduledTaskHandlers(deps);
+
+    const handler = registeredHandlers.get(ScheduledTaskIpc.Create);
+    await handler?.(undefined, {
+      name: 'dingtalk group',
+      enabled: true,
+      schedule: { kind: 'cron', expr: '0 13 * * *' },
+      payload: { kind: PayloadKind.AgentTurn, message: 'hi' },
+      delivery: {
+        mode: DeliveryMode.Announce,
+        channel: 'dingtalk-connector',
+        to: `group:${nativeConversationId.toLowerCase()}`,
+        accountId: 'dingtalk-bot-1',
+      },
+    });
+
+    const input = cronJobService.addJob.mock.calls[0][0] as {
+      delivery: Record<string, unknown>;
+    };
+    expect(input.delivery).toEqual({
+      mode: DeliveryMode.Announce,
+      channel: 'dingtalk-connector',
+      to: nativeConversationId,
+      accountId: 'dingtalk-bot-1',
+    });
+  });
+
   test('repairs only the casing of an existing WeCom group target', async () => {
     const nativeGroupId = 'wrrQeUDgAAeLCVE2WB3A39jXRlrSVEyA';
     const request = vi.fn(async () => ({
@@ -282,6 +326,94 @@ describe('registerScheduledTaskHandlers', () => {
         state: {},
         createdAt: '2026-07-09T00:00:00.000Z',
         updatedAt: '2026-07-09T00:00:00.000Z',
+      },
+    ]);
+
+    const result = await migrateScheduledTaskAnnounceJobs(deps);
+
+    expect(result).toEqual({ checked: 1, updated: 0 });
+    expect(cronJobService.updateJob).not.toHaveBeenCalled();
+    expect(adapter.connectGatewayIfNeeded).not.toHaveBeenCalled();
+  });
+
+  test('repairs only the casing of an existing DingTalk group target', async () => {
+    const nativeConversationId = 'cid+wQbmjFBusv8Bld+Du9t1w==';
+    const request = vi.fn(async () => ({
+      sessions: [
+        {
+          origin: {
+            provider: 'dingtalk-connector',
+            chatType: 'group',
+            to: nativeConversationId,
+            accountId: 'dingtalk-bot-1',
+          },
+        },
+      ],
+    }));
+    const { cronJobService, deps } = makeDeps(OpenClawEnginePhase.Running, {
+      gatewayClient: { request },
+    });
+    cronJobService.listJobs.mockResolvedValue([
+      {
+        id: 'legacy-dingtalk-job',
+        name: 'legacy dingtalk group',
+        description: '',
+        enabled: true,
+        schedule: { kind: 'cron', expr: '0 13 * * *' },
+        sessionTarget: SessionTarget.Isolated,
+        wakeMode: WakeMode.Now,
+        payload: { kind: PayloadKind.AgentTurn, message: 'hi' },
+        delivery: {
+          mode: DeliveryMode.Announce,
+          channel: 'dingtalk-connector',
+          to: nativeConversationId.toLowerCase(),
+          accountId: 'dingtalk-bot-1',
+        },
+        agentId: 'agent-dingtalk-bot-1',
+        sessionKey: null,
+        state: {},
+        createdAt: '2026-07-10T00:00:00.000Z',
+        updatedAt: '2026-07-10T00:00:00.000Z',
+      },
+    ]);
+
+    const result = await migrateScheduledTaskAnnounceJobs(deps);
+
+    expect(result).toEqual({ checked: 1, updated: 1 });
+    expect(cronJobService.updateJob).toHaveBeenCalledWith('legacy-dingtalk-job', {
+      delivery: {
+        mode: DeliveryMode.Announce,
+        channel: 'dingtalk-connector',
+        to: nativeConversationId,
+        accountId: 'dingtalk-bot-1',
+      },
+    });
+  });
+
+  test('preserves an existing native-case DingTalk group target', async () => {
+    const nativeConversationId = 'cid+wQbmjFBusv8Bld+Du9t1w==';
+    const { adapter, cronJobService, deps } = makeDeps(OpenClawEnginePhase.Starting);
+    cronJobService.listJobs.mockResolvedValue([
+      {
+        id: 'native-dingtalk-job',
+        name: 'native dingtalk group',
+        description: '',
+        enabled: true,
+        schedule: { kind: 'cron', expr: '0 13 * * *' },
+        sessionTarget: SessionTarget.Isolated,
+        wakeMode: WakeMode.Now,
+        payload: { kind: PayloadKind.AgentTurn, message: 'hi' },
+        delivery: {
+          mode: DeliveryMode.Announce,
+          channel: 'dingtalk-connector',
+          to: nativeConversationId,
+          accountId: 'dingtalk-bot-1',
+        },
+        agentId: 'agent-dingtalk-bot-1',
+        sessionKey: null,
+        state: {},
+        createdAt: '2026-07-10T00:00:00.000Z',
+        updatedAt: '2026-07-10T00:00:00.000Z',
       },
     ]);
 

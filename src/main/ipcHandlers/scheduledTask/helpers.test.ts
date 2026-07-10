@@ -4,6 +4,7 @@ import {
   dedupeConversationMappings,
   filterConversationMappingsForSelectedAccount,
   resolveConversationAgentIdFromMappings,
+  resolveGroupDeliveryTargetFromSessions,
   resolveImDeliveryHintsFromSessions,
   resolveWecomGroupDeliveryTargetFromSessions,
 } from './helpers';
@@ -194,6 +195,27 @@ describe('resolveWecomGroupDeliveryTargetFromSessions', () => {
         preferredAccountId: 'bot-1',
       }),
     ).toBeNull();
+  });
+
+  test('restores a DingTalk openConversationId through the generic group resolver', () => {
+    const nativeConversationId = 'cid+wQbmjFBusv8Bld+Du9t1w==';
+    expect(
+      resolveGroupDeliveryTargetFromSessions({
+        sessions: [
+          {
+            origin: {
+              provider: 'dingtalk-connector',
+              chatType: 'group',
+              to: nativeConversationId,
+              accountId: 'dingtalk-bot-1',
+            },
+          },
+        ],
+        platform: 'dingtalk',
+        peerId: nativeConversationId.toLowerCase(),
+        preferredAccountId: 'dingtalk-bot-1',
+      }),
+    ).toBe(nativeConversationId);
   });
 });
 
