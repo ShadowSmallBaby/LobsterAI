@@ -48,7 +48,10 @@ interface SidebarProps {
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   onWidthChange?: (width: number) => void;
-  updateBadge?: React.ReactNode;
+  updateNotice?: React.ReactNode;
+  /** The expanded update card owns the sidebar bottom; suppress the promo
+   * banner while it shows so the two never stack. */
+  hideAdBanner?: boolean;
   hideLogin?: boolean;
 }
 
@@ -136,7 +139,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   isCollapsed,
   onToggleCollapse,
   onWidthChange,
-  updateBadge,
+  updateNotice,
+  hideAdBanner,
   hideLogin,
 }) => {
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
@@ -159,9 +163,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   const resizeStartXRef = useRef(0);
   const resizeStartWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
   const agentScrollContainerRef = useRef<HTMLDivElement>(null);
-  const isMac = window.electron.platform === 'darwin';
   const isWindows = window.electron.platform === 'win32';
-  const showHeaderRow = !isWindows || Boolean(updateBadge);
+  const showHeaderRow = !isWindows;
   const batchSelectableKeySet = useMemo(
     () => new Set(batchSelectableItems.map((item) => item.key)),
     [batchSelectableItems],
@@ -516,8 +519,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       >
       <div className="pt-3 pb-3">
         {showHeaderRow && (
-          <div className="draggable sidebar-header-drag h-8 flex items-center justify-between px-3">
-            <div className={`${isMac ? 'pl-[68px]' : ''}`}>{updateBadge}</div>
+          <div className="draggable sidebar-header-drag h-8 flex items-center justify-end px-3">
             {!isWindows && (
               <button
                 type="button"
@@ -649,7 +651,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             onBatchSelectableItemsChange={handleBatchSelectableItemsChange}
           />
         </div>
-        {!isBatchMode && (
+        {!isBatchMode && !hideAdBanner && (
           <SidebarAdBanner onVisibleChange={setIsSidebarBannerVisible} />
         )}
         <div
@@ -676,6 +678,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
       />
+      {!isBatchMode && updateNotice && (
+        <div className="non-draggable px-3 pt-1.5">{updateNotice}</div>
+      )}
       {isBatchMode ? (
         <div className="border-t border-border/60 px-3 pb-3 pt-2">
           <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
