@@ -1,5 +1,7 @@
 'use strict';
 
+const path = require('path');
+
 const config = require('../electron-builder.json');
 const { readBuildKeyfrom } = require('./build-keyfrom.cjs');
 
@@ -91,6 +93,16 @@ const keyfrom = readBuildKeyfrom();
 for (const platformName of ['mac', 'win', 'linux']) {
   mergeExtraResources(platformName);
 }
+
+// Sign every Windows binary electron-builder produces (LobsterAI.exe, the
+// uninstaller, the installer) through the internal Youdao signing service,
+// not just the final Setup.exe: the unsigned inner exe is what security
+// software freezes on first execution. The hook skips with a warning when
+// YD_SIGN_* credentials are absent, so local packaging still works.
+config.win = {
+  ...config.win,
+  sign: path.join(__dirname, 'win-sign.cjs'),
+};
 
 delete config.extraResources;
 
