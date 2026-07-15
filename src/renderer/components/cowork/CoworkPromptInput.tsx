@@ -8,7 +8,7 @@ import {
   PlayCircleIcon,
 } from '@heroicons/react/24/outline';
 import { ArrowUpIcon, FolderIcon } from '@heroicons/react/24/solid';
-import { AuthSubscriptionStatus } from '@shared/auth/constants';
+import { AuthRuntimePhase, AuthSubscriptionStatus } from '@shared/auth/constants';
 import { ProviderName } from '@shared/providers';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -29,6 +29,7 @@ import {
   CoworkSteerStatus,
 } from '../../../shared/cowork/steer';
 import { agentService } from '../../services/agent';
+import { authService } from '../../services/auth';
 import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
 import { buildCoworkCapabilitySelection } from '../../services/coworkCapabilitySelection';
@@ -501,6 +502,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const currentSession = useSelector((state: RootState) => state.cowork.currentSession);
     const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
     const authQuota = useSelector((state: RootState) => state.auth.quota);
+    const authRuntimePhase = useSelector((state: RootState) => state.auth.runtimeState.phase);
+    const authRuntimeBusy = isLoggedIn && (
+      authRuntimePhase === AuthRuntimePhase.LoadingModels
+      || authRuntimePhase === AuthRuntimePhase.ApplyingConfig
+      || authRuntimePhase === AuthRuntimePhase.RestartingGateway
+    );
+    const authRuntimeFailed = isLoggedIn && authRuntimePhase === AuthRuntimePhase.Failed;
     const asrQuota = useSelector((state: RootState) => state.asrQuota);
     const [value, setValue] = useState(draftPrompt);
     const [steerValue, setSteerValue] = useState(steerDraft);
@@ -1278,6 +1286,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const handleSubmit = useCallback(async (submitMethod: 'button' | 'keyboard' | 'voice' = 'button') => {
     let effectiveSubmitMethod = submitMethod;
+    if (authRuntimeBusy || authRuntimeFailed) {
+      showToast(i18nService.t(
+        authRuntimeFailed ? 'authRuntimeFailed' : 'authRuntimeInitializing',
+      ));
+      return;
+    }
     const shouldSubmitAsSteer = isStreaming
       && !goalInputActive
       && !!sessionId
@@ -1705,7 +1719,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     resetGoalInput(false);
     draftStartedAnalyticsRef.current = false;
     inputSourceOverrideRef.current = null;
-  }, [value, steerInputActive, steerValue, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, canSteer, remoteManaged, disabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, selectedTextSnippets, pendingSteers.length, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId, preparePromptPayload, modelSupportsImage, queuedMediaSelection]);
+  }, [value, steerInputActive, steerValue, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, canSteer, remoteManaged, disabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, selectedTextSnippets, pendingSteers.length, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId, preparePromptPayload, modelSupportsImage, queuedMediaSelection, authRuntimeBusy, authRuntimeFailed]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     const willSelect = !activeSkillIds.includes(skill.id);
@@ -1847,7 +1861,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       window.dispatchEvent(new CustomEvent('app:showToast', {
         detail: i18nService.t('coworkSessionStillRunning'),
       }));
-    } else if (isSendCombo && !disabled && !isPatchingModel) {
+    } else if (
+      isSendCombo
+      && !disabled
+      && !isPatchingModel
+      && !authRuntimeBusy
+      && !authRuntimeFailed
+    ) {
       event.preventDefault();
       handleSubmit('keyboard');
     } else {
@@ -2603,6 +2623,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     && !isVoiceRecognizing
     && !isPatchingModel
     && !agentModelIsInvalid
+    && !authRuntimeBusy
+    && !authRuntimeFailed
     && (!!activeTextareaValue.trim() || (!steerInputActive && hasAttachments));
   const enhancedContainerClass = isDraggingFiles
     ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
@@ -3257,11 +3279,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       {steerModeBadge}
     </div>
   ) : null;
-  const textareaPlaceholder = steerInputActive
-    ? i18nService.t('coworkSteerPlaceholder')
-    : goalInputActive
-      ? i18nService.t('coworkGoalInputPlaceholder')
-      : placeholder;
+  const textareaPlaceholder = authRuntimeBusy
+    ? i18nService.t('authRuntimeInitializing')
+    : authRuntimeFailed
+      ? i18nService.t('authRuntimeFailed')
+      : steerInputActive
+        ? i18nService.t('coworkSteerPlaceholder')
+        : goalInputActive
+          ? i18nService.t('coworkGoalInputPlaceholder')
+          : placeholder;
 
   const renderMentionTextarea = ({
     rows,
@@ -3322,6 +3348,26 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           caretColor: 'var(--lobster-text-primary)',
           }}
         />
+        {(authRuntimeBusy || authRuntimeFailed) && (
+          <div className={`mt-1 flex items-center gap-2 px-1 text-xs ${
+            authRuntimeFailed
+              ? 'text-red-600 dark:text-red-400'
+              : 'text-secondary'
+          }`}>
+            <span>{i18nService.t(
+              authRuntimeFailed ? 'authRuntimeFailed' : 'authRuntimeInitializing',
+            )}</span>
+            {authRuntimeFailed && (
+              <button
+                type="button"
+                className="font-medium underline underline-offset-2"
+                onClick={() => void authService.retryRuntimeReconciliation()}
+              >
+                {i18nService.t('authRuntimeRetry')}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     );
 
